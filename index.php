@@ -1,6 +1,10 @@
 <?php
 declare(strict_types=1);
 
+require_once dirname(__DIR__) . '/guard.php';
+
+require_once __DIR__ . '/guard.php';
+
 $sites = [
     ['href' => '/ck44/', 'name' => 'CK444', 'domain' => 'ck444.ai'],
     ['href' => '/nbajee88/', 'name' => 'Nbajee88', 'domain' => 'nbajee88.cc'],

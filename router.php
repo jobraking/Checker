@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/guard.php';
+
 $path = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/';
 
 $ck = __DIR__ . '/ck44';
@@ -153,6 +155,11 @@ foreach ([
 }
 
 if ($path === '/format-fixer.php' || $path === '/format-fixer') { require __DIR__ . '/format-fixer.php'; return true; }
+
+if (in_array($path, ['/login', '/login.php'], true)) { require __DIR__ . '/login.php'; return true; }
+if (in_array($path, ['/register', '/register.php'], true)) { require __DIR__ . '/register.php'; return true; }
+if (in_array($path, ['/dashboard', '/dashboard.php'], true)) { require __DIR__ . '/dashboard.php'; return true; }
+if (in_array($path, ['/logout', '/logout.php'], true)) { require __DIR__ . '/logout.php'; return true; }
 
 http_response_code(404);
 header('Content-Type: text/plain; charset=utf-8');

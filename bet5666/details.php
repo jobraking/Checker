@@ -1,5 +1,7 @@
 <?php
 declare(strict_types=1);
+
+require_once dirname(__DIR__) . '/guard.php';
 require_once __DIR__ . '/ck-client.php';
 
 $remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');

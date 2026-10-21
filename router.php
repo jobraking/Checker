@@ -161,6 +161,8 @@ if (in_array($path, ['/register', '/register.php'], true)) { require __DIR__ . '
 if (in_array($path, ['/dashboard', '/dashboard.php'], true)) { require __DIR__ . '/dashboard.php'; return true; }
 if (in_array($path, ['/logout', '/logout.php'], true)) { require __DIR__ . '/logout.php'; return true; }
 
+if (in_array($path, ['/setup', '/setup.php'], true)) { require __DIR__ . '/setup.php'; return true; }
+
 http_response_code(404);
 header('Content-Type: text/plain; charset=utf-8');
 echo "Not found\n";

@@ -1,1 +1,0 @@
-webpackJsonp([202],{t2No:function(p,o,n){p.exports=n.p+"a4.jpg"}});

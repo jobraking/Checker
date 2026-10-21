@@ -1,1 +1,0 @@
-webpackJsonptcgmodulemc([200],{uPEx:function(c,n){}});

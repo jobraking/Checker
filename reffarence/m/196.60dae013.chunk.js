@@ -1,1 +1,0 @@
-webpackJsonp([196],{IN9K:function(p,o,e){p.exports=e.p+"ios5.jpg"}});

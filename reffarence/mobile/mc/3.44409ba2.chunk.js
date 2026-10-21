@@ -1,1 +1,0 @@
-webpackJsonptcgmodulemc([3],{"n+1d":function(e,t,d){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0;t.default={propfit_and_loss:"个人报表"}}});

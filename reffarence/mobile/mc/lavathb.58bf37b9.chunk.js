@@ -1,1 +1,0 @@
-webpackJsonptcgmodulemc([205],{hwVJ:function(c,n){}});

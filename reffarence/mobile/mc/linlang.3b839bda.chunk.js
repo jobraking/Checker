@@ -1,1 +1,0 @@
-webpackJsonptcgmodulemc([204],{Hynw:function(c,n){}});

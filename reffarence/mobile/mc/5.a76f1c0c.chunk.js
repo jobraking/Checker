@@ -1,1 +1,0 @@
-webpackJsonptcgmodulemc([5],{OiOf:function(e,t,u){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0;t.default={ELOTT_3RD:"视讯彩"}}});

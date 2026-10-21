@@ -1,1 +1,0 @@
-webpackJsonptcgmodulemc([208],{JyjU:function(c,n){}});

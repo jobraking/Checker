@@ -1,0 +1,1 @@
+webpackJsonptcgmodulemc([207],{YPai:function(c,n){}});

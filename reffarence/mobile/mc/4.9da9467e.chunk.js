@@ -1,0 +1,1 @@
+webpackJsonptcgmodulemc([4],{Gtlz:function(e,t,c){"use strict";Object.defineProperty(t,"__esModule",{value:!0}),t.default=void 0;t.default={gc_PVP:"小游戏"}}});

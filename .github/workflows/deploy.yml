@@ -34,3 +34,5 @@ jobs:
             **/.github/**
             **/README.md
             **/AGENTS.md
+            **/reffarence/**
+            reffarence/**

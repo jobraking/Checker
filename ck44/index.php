@@ -14,12 +14,6 @@ require_once __DIR__ . '/ck-client.php';
  * PHP session, on disk, or in the page.
  */
 
-// Refuse anything that did not come from this machine.
-$remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
-if (!in_array($remote, ['127.0.0.1', '::1'], true)) {
-    http_response_code(403);
-    exit('This tool only accepts requests from localhost.');
-}
 
 ini_set('session.use_strict_mode', '1');
 session_set_cookie_params([

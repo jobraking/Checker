@@ -15,11 +15,12 @@ $sites = [
     ['href' => '/5777bet/', 'name' => '5777Bet', 'domain' => '5777bet.win'],
     ['href' => '/8777bet888/', 'name' => '8777Bet888', 'domain' => '8777bet888.com'],
     ['href' => '/jaya9bangla/', 'name' => 'Jaya9Bangla', 'domain' => 'ck444.ai'],
+    ['href' => '/kx8/', 'name' => 'KX8', 'domain' => 'kx8.info'],
     ['href' => '/ppvip10/', 'name' => 'PPVip10', 'domain' => 'ppvip01.com'],
 ];
 
 $stats = [
-    ['value' => '42', 'label' => 'Live deployments'],
+    ['value' => '43', 'label' => 'Live deployments'],
     ['value' => '4.3k', 'label' => 'Lines per node'],
     ['value' => '2', 'label' => 'Crypto layers'],
     ['value' => '0', 'label' => 'Remote dependencies'],
@@ -292,7 +293,7 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
               Launch a checker
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
             </a>
-            <a class="btn btn-ghost" href="/showcase.php">Browse all 42</a>
+            <a class="btn btn-ghost" href="/showcase.php">Browse all 43</a>
             <span class="hero-note">Login required</span>
           </div>
           <ul class="stats">

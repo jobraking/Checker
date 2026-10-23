@@ -28,7 +28,7 @@ request pipeline itself.
 
 | | |
 |---|---|
-| **Deployments** | 42 mirrored nodes |
+| **Deployments** | 43 mirrored nodes |
 | **Entry point** | `index.php` → landing page |
 | **Directory** | `showcase.php` → all checkers |
 | **Mode** | Session login required |
@@ -59,7 +59,7 @@ request pipeline itself.
                                        │
                         ┌──────────────▼───────────────┐
                         │          showcase.php        │
-                        │     42-node directory        │
+                        │     43-node directory        │
                         └──────────────┬───────────────┘
                                        │  /node/
               ┌────────────────────────┼────────────────────────┐
@@ -128,7 +128,7 @@ checker2/
 ├── format-fixer.php          # Standalone credential line normalizer
 ├── AGENTS.md                 # Agent operating instructions
 ├── README.md
-└── <node>/                   # 42 mirrored deployments
+└── <node>/                   # 43 mirrored deployments
     ├── index.php             # Console: single, bulk, captcha, change password
     ├── saved.php             # Saved account vault and live panel
     ├── ck-client.php         # API client: login, profile, balance, retries

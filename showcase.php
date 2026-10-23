@@ -85,6 +85,7 @@ $items = [
     ['href'=>'/cbaji8/','title'=>'Cbaji8 Checker','desc'=>'cbaji8 accounts','domain'=>'cbaji8.club'],
     ['href'=>'/gbajee53/','title'=>'Gbajee53 Checker','desc'=>'gbajee53 accounts','domain'=>'gbajee53.vip'],
     ['href'=>'/jaya9bangla/','title'=>'Jaya9bangla Checker','desc'=>'jaya9bangla accounts','domain'=>'ck444.ai'],
+    ['href'=>'/kx8/','title'=>'KX8 Checker','desc'=>'kx8.info accounts','domain'=>'kx8.info'],
     ['href'=>'/nbajee88/','title'=>'Nbajee88 Checker','desc'=>'nbajee88 accounts','domain'=>'nbajee88.cc'],
     ['href'=>'/97nbajee/','title'=>'97Nbajee Checker','desc'=>'97nbajee accounts','domain'=>'97nbajee.club'],
     ['href'=>'/12xbajee/','title'=>'12Xbajee Checker','desc'=>'12xbajee accounts','domain'=>'12xbajee.com'],

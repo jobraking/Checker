@@ -2,12 +2,12 @@
 
 # D3M09 Checker
 
-**A local-first account checker platform for the checker fleet.**
+**A self-hosted account checker platform for the checker fleet.**
 Unified landing page, searchable showcase, per-node consoles, and a byte-identical
 login pipeline across every deployment.
 
 [![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?logo=php&logoColor=white)](#requirements)
-[![Platform](https://img.shields.io/badge/platform-loopback%20only-00B894)](#security-model)
+[![Auth](https://img.shields.io/badge/auth-session%20login-00B894)](#security-model)
 [![Crypto](https://img.shields.io/badge/crypto-RSA%20%2B%20DES--ECB-0877ED)](#request-pipeline)
 [![Dependencies](https://img.shields.io/badge/dependencies-none-5F7186)](#requirements)
 
@@ -28,10 +28,10 @@ request pipeline itself.
 
 | | |
 |---|---|
-| **Deployments** | 46 mirrored nodes |
+| **Deployments** | 42 mirrored nodes |
 | **Entry point** | `index.php` → landing page |
 | **Directory** | `showcase.php` → all checkers |
-| **Mode** | Loopback only (`127.0.0.1` / `::1`) |
+| **Mode** | Session login required |
 | **Dependencies** | PHP extensions only, no Composer |
 
 ---
@@ -44,7 +44,7 @@ request pipeline itself.
 - **Bulk checks** — newline batches with per-line status, captcha handling, and throttling.
 - **Saved vault** — successful VIP logins stored per node with rank filters and masked tokens.
 - **Live endpoint explorer** — authenticated sweep of the full endpoint map as raw JSON.
-- **Local-only surface** — every console rejects non-loopback requests and uses CSRF tokens.
+- **Login-gated surface** — every console, checker, and saved vault requires a signed-in account and CSRF tokens.
 - **No framework** — plain PHP 8.1+, one shared client per node, zero build step.
 
 ---
@@ -59,7 +59,7 @@ request pipeline itself.
                                        │
                         ┌──────────────▼───────────────┐
                         │          showcase.php        │
-                        │     46-node directory        │
+                        │     42-node directory        │
                         └──────────────┬───────────────┘
                                        │  /node/
               ┌────────────────────────┼────────────────────────┐
@@ -120,18 +120,22 @@ Set `CK_MERCHANT` to pin one explicitly.
 checker2/
 ├── index.php                 # Landing page
 ├── showcase.php              # Full checker directory
+├── auth.php                  # Sessions, CSRF, user lookup
+├── guard.php                 # Login gate for every private route
+├── login.php / register.php  # Account access
+├── setup.php                 # Admin/database setup (signed in)
 ├── router.php                # Front controller / built-in server router
 ├── format-fixer.php          # Standalone credential line normalizer
 ├── AGENTS.md                 # Agent operating instructions
 ├── README.md
-└── <node>/                   # 46 mirrored deployments
+└── <node>/                   # 42 mirrored deployments
     ├── index.php             # Console: single, bulk, captcha, change password
     ├── saved.php             # Saved account vault and live panel
     ├── ck-client.php         # API client: login, profile, balance, retries
     ├── vendor-crypto.php     # Pure-PHP DES-ECB + jsbn-compatible RSA
     ├── vendor-rsa.js         # Original jsbn bundle
     ├── bulk-check.php        # CLI batch checker
-    ├── details.php           # Localhost-only endpoint dump
+    ├── details.php           # Authenticated endpoint dump
     ├── router.php            # Per-node routing
     ├── live_endpoints.txt    # Endpoint map used by the live explorer
     ├── login.js              # Browser-side handshake reference
@@ -146,11 +150,12 @@ Nodes are intentionally self-contained. Copy a node directory, change
 
 ## Requirements
 
-- **PHP 8.1+** with `curl`, `json`, `session`, `openssl` (optional)
+- **PHP 8.1+** with `curl`, `json`, `session`, `pdo_mysql`, `openssl` (optional)
+- **MySQL** database for platform accounts
 - **Node.js 18+** only for the two optional `.js` helpers
 - Any OS that runs PHP
 
-No Composer. No database. No build step.
+No Composer. No build step.
 
 ---
 
@@ -160,21 +165,16 @@ No Composer. No database. No build step.
 git clone https://github.com/emonbudc/Checker.git
 cd Checker
 
-php -S 127.0.0.1:8080
-```
-
-Open **http://127.0.0.1:8080** for the landing page.
-
-To exercise the front controller as a router script:
-
-```bash
 php -S 127.0.0.1:8080 router.php
 ```
 
-Both modes resolve `/`, `/showcase.php`, and every `/node/` route.
+Open **http://127.0.0.1:8080**, register an account, then sign in. The login
+redirects to the showcase.
 
-> Bind to `127.0.0.1`, not `0.0.0.0`. Consoles refuse non-loopback clients, but
-> binding loopback keeps that guarantee meaningful.
+Router mode also blocks direct requests for sensitive per-node files. A bare
+`php -S 127.0.0.1:8080` bypasses `.htaccess` and can serve static vault files.
+
+> Set `CK_MERCHANT` when vendor auto-detection is not available for a node.
 
 ---
 
@@ -264,26 +264,30 @@ directory, and the node is reachable.
 | `live_endpoints.txt` | per node | Endpoint list for the live explorer |
 | `bulk-check-audit.jsonl` | CWD | CLI audit trail |
 
-These files contain live credentials and tokens. Treat the working tree as
-private material and keep it out of public distribution.
+These files contain live credentials and tokens. `.htaccess` blocks them from
+HTTP access, and the deploy workflow excludes them; keep them out of git
+history as well.
 
 ---
 
 ## Security Model
 
-- **Loopback gate** — `index.php`, `saved.php`, and `details.php` compare
-  `REMOTE_ADDR` against `127.0.0.1` and `::1`.
+- **Login gate** — `guard.php` protects every page, checker, saved vault, and
+  utility; only `login`, `register`, and `logout` are public.
 - **CSRF** — every mutating POST carries a per-session token checked with
   `hash_equals`.
-- **Sessions** — strict mode, `HttpOnly`, `SameSite=Lax`, per-node session names.
+- **Sessions** — strict mode, `HttpOnly`, `SameSite=Lax`, one shared platform session cookie.
 - **Headers** — `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: no-referrer`.
-- **Crypto** — RSA public-key handshake; plaintext passwords never travel in
-  request bodies or persist in session state.
+- **Crypto** — vendor credentials are RSA-wrapped and DES-ECB encrypted before
+  transport; platform passwords are verified server-side and never persist in
+  session state.
 - **Vault permissions** — `pwd.json` is written with mode `0600`.
+- **Static file protection** — `.htaccess` denies web access to `pwd.json`,
+  `.ck-session.json`, audit logs, endpoint maps, and configuration files.
 
-Behind a reverse proxy, `REMOTE_ADDR` is the proxy address, not the client.
-Either forward the real address explicitly or keep the app on loopback.
+Platform accounts live in the MySQL `users` table; run `schema.sql` once or let
+`db.php` create the table on first connection.
 
 ---
 
@@ -301,7 +305,7 @@ Either forward the real address explicitly or keep the app on loopback.
 
 <div align="center">
 
-**D3M09 Checker** — local account console
-Loopback access · no telemetry · no external assets
+**D3M09 Checker** — account checker console
+Login required · no telemetry · no external assets
 
 </div>

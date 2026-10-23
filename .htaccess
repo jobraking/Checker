@@ -1,0 +1,11 @@
+<IfModule mod_authz_core.c>
+    <FilesMatch "^(pwd|pwd\.json|db_name\.txt|\.ck-session\.json|bulk-check-audit\.jsonl|live_endpoints\.txt|config\.php|db\.php|auth\.php|guard\.php|schema\.sql|README\.md|AGENTS\.md|\.gitignore)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <FilesMatch "^(pwd|pwd\.json|db_name\.txt|\.ck-session\.json|bulk-check-audit\.jsonl|live_endpoints\.txt|config\.php|db\.php|auth\.php|guard\.php|schema\.sql|README\.md|AGENTS\.md|\.gitignore)$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+</IfModule>

@@ -1,17 +1,18 @@
 <?php
 declare(strict_types=1);
+$root = dirname(__DIR__);
 
 $path = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/';
 
-$ck = '/mnt/sdcard/htdocs/ck44';
-$cv = '/mnt/sdcard/htdocs/cv666';
-$ja = '/mnt/sdcard/htdocs/jaya9bangla';
-$tk = '/mnt/sdcard/htdocs/tk999';
-$bdt = '/mnt/sdcard/htdocs/bdt399';
-$bet5 = '/mnt/sdcard/htdocs/bet5666';
-$ng = '/mnt/sdcard/htdocs/ng88b';
-$xb = '/mnt/sdcard/htdocs/xbet';
-$bet = '/mnt/sdcard/htdocs/bet499';
+$ck = $root . '/ck44';
+$cv = $root . '/cv666';
+$ja = $root . '/jaya9bangla';
+$tk = $root . '/tk999';
+$bdt = $root . '/bdt399';
+$bet5 = $root . '/bet5666';
+$ng = $root . '/ng88b';
+$xb = $root . '/xbet';
+$bet = $root . '/bet499';
 
 if ($path === '/' || $path === '/index.php') {
     echo "<!doctype html><html><head><meta charset=\"utf-8\"><title>D3M09 ACCOUNT CHECKER - CHECKER SHOWCASE</title>";
@@ -35,12 +36,12 @@ if ($path === '/' || $path === '/index.php') {
 }
 
 if ($path === '/saved' || $path === '/saved.php') {
-    require '/mnt/sdcard/htdocs/bet499' . '/saved.php';
+    require $root . '/bet499' . '/saved.php';
     return true;
 }
 
 foreach ([
-    'bet499' => $ck,
+    'bet499' => $bet,
     'cv666' => $cv,
     'jaya9bangla' => $ja,
     'tk999' => $tk,
@@ -52,7 +53,8 @@ foreach ([
     if (preg_match('#^/' . $prefix . '(?:/(.*))?$#', $path, $m)) {
         $sub = $m[1] ?? '';
         if ($sub === '' || $sub === 'index.php') { require $dir . '/index.php'; return true; }
-        if ($sub === 'saved' || $sub === 'saved.php') { require $dir . '/saved.php'; return true; }
+        if (($sub === 'saved' || $sub === 'saved.php') && is_file($dir . '/saved.php')) { require $dir . '/saved.php'; return true; }
+    if (($sub === 'details' || $sub === 'details.php') && is_file($dir . '/details.php')) { require $dir . '/details.php'; return true; }
         http_response_code(404); echo "Not found\n"; return true;
     }
 }

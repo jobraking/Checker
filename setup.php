@@ -1,12 +1,15 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/config.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/config.php';
+
+require_login();
 
 $message = '';
 $error = '';
 $defaultDb = 'if0_43151253_relax';
-$defaultUser = 'demon';
+$defaultUser = '';
 if (is_file(__DIR__ . '/db_name.txt')) {
     $candidate = trim((string) file_get_contents(__DIR__ . '/db_name.txt'));
     if ($candidate !== '') {
@@ -15,30 +18,36 @@ if (is_file(__DIR__ . '/db_name.txt')) {
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-    $dbName = trim((string) ($_POST['db_name'] ?? ''));
-    $adminUser = trim((string) ($_POST['admin_user'] ?? ''));
-    $adminPass = (string) ($_POST['admin_pass'] ?? '');
-    if ($dbName === '' || $adminUser === '' || $adminPass === '') {
-        $error = 'Database name, username, and password are required.';
+    if (!csrf_check($_POST['csrf'] ?? null)) {
+        $error = 'Invalid request.';
     } else {
-        try {
-            $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . $dbName . ';charset=utf8mb4';
-            $pdo = new PDO($dsn, DB_USER, DB_PASS, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false,
-            ]);
-            $pdo->exec("CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, username VARCHAR(50) NOT NULL UNIQUE, password_hash VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-            $hash = password_hash($adminPass, PASSWORD_DEFAULT);
-            $stmt = $pdo->prepare("INSERT INTO users (username, password_hash) VALUES (?, ?) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)");
-            $stmt->execute([$adminUser, $hash]);
-            file_put_contents(__DIR__ . '/db_name.txt', $dbName);
-            $message = 'Setup complete. You can now sign in.';
-        } catch (Throwable $e) {
-            $error = 'Setup failed: ' . $e->getMessage();
+        $dbName = trim((string) ($_POST['db_name'] ?? ''));
+        $adminUser = trim((string) ($_POST['admin_user'] ?? ''));
+        $adminPass = (string) ($_POST['admin_pass'] ?? '');
+        if ($dbName === '' || $adminUser === '' || $adminPass === '') {
+            $error = 'Database name, username, and password are required.';
+        } else {
+            try {
+                $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . $dbName . ';charset=utf8mb4';
+                $pdo = new PDO($dsn, DB_USER, DB_PASS, [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES => false,
+                ]);
+                $pdo->exec("CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, username VARCHAR(50) NOT NULL UNIQUE, password_hash VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                $hash = password_hash($adminPass, PASSWORD_DEFAULT);
+                $stmt = $pdo->prepare("INSERT INTO users (username, password_hash) VALUES (?, ?) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)");
+                $stmt->execute([$adminUser, $hash]);
+                file_put_contents(__DIR__ . '/db_name.txt', $dbName);
+                $message = 'Setup complete. You can now sign in.';
+            } catch (Throwable $e) {
+                $error = 'Setup failed: ' . $e->getMessage();
+            }
         }
     }
 }
+
+$token = csrf_token();
 
 $extensions = [
     'pdo' => extension_loaded('pdo'),
@@ -79,6 +88,7 @@ PDO MySQL: <?= $extensions['pdo_mysql'] ? 'available' : 'missing' ?><br>
 Guard file: <?= is_file(__DIR__ . '/guard.php') ? 'present' : 'missing' ?>
 </div>
 <form method="post" action="/setup.php">
+<input type="hidden" name="csrf" value="<?= htmlspecialchars($token, ENT_QUOTES, 'UTF-8') ?>">
 <label for="db_name">Database name</label>
 <input id="db_name" name="db_name" type="text" value="<?= htmlspecialchars($defaultDb, ENT_QUOTES, 'UTF-8') ?>" required>
 <label for="admin_user">Admin username</label>

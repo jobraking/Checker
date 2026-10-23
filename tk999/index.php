@@ -8,29 +8,22 @@ require_once __DIR__ . '/ck-client.php';
 /**
  * Local web interface for account checking.
  *
- * Run it bound to loopback only:
- *     php -S 127.0.0.1:8080
- *     then open http://127.0.0.1:8080
+ * Requires an authenticated platform session.
  *
  * The password is used once, in the login request, and is never stored in the
  * PHP session, on disk, or in the page.
  */
 
-// Refuse anything that did not come from this machine.
-$remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
-if (!in_array($remote, ['127.0.0.1', '::1'], true)) {
-    http_response_code(403);
-    exit('This tool only accepts requests from localhost.');
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    ini_set('session.use_strict_mode', '1');
+    session_set_cookie_params([
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'path'     => '/',
+    ]);
+    session_name(basename(__DIR__) . 'checker');
+    session_start();
 }
-
-ini_set('session.use_strict_mode', '1');
-session_set_cookie_params([
-    'httponly' => true,
-    'samesite' => 'Lax',
-    'path'     => '/',
-]);
-session_name(basename(__DIR__) . 'checker');
-session_start();
 
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
@@ -398,7 +391,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$merchantInfo = resolveMerchant($wantRedetect);
+$merchantInfo = [
+    'merchant' => (string) ($_SESSION['merchant'] ?? CK_DEFAULT_MERCHANT),
+    'source'   => (string) ($_SESSION['merchant_source'] ?? 'default'),
+    'error'    => null,
+];
 
 $session = $_SESSION['ck'] ?? null;
 $profile = null;

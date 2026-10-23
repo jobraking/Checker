@@ -30,14 +30,16 @@ function savedLoad(string $file): array
     return is_array($decoded) ? array_values(array_filter($decoded, 'is_array')) : [];
 }
 
-ini_set('session.use_strict_mode', '1');
-session_set_cookie_params([
-    'httponly' => true,
-    'samesite' => 'Lax',
-    'path'     => '/',
-]);
-session_name(basename(__DIR__) . 'checker');
-session_start();
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    ini_set('session.use_strict_mode', '1');
+    session_set_cookie_params([
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'path'     => '/',
+    ]);
+    session_name(basename(__DIR__) . 'checker');
+    session_start();
+}
 
 if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -720,7 +722,7 @@ details.raw pre{
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
             <span>Check balance</span>
           </button>
-          <a class="btn btn-ghost btn-sm" href="details.php?username=<?= h(rawurlencode($account['username'])) ?>&amp;pwd=<?= h(rawurlencode($account['password'])) ?>">
+          <a class="btn btn-ghost btn-sm" href="details.php?username=<?= h(rawurlencode($account['username'])) ?>">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
             <span>Live endpoints</span>
           </a>

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/guard.php';
 
+$user = current_user();
+
 $path = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/';
 
 $ck = __DIR__ . '/ck44';
@@ -164,6 +166,8 @@ a{color:inherit}
 }
 .btn-primary{background:var(--brand);color:#fff;box-shadow:0 10px 22px rgba(8,119,237,.24)}
 .btn-primary:hover{background:var(--brand-dark);transform:translateY(-1px);box-shadow:0 14px 28px rgba(8,119,237,.3)}
+.btn-ghost{background:#fff;color:var(--ink);border-color:var(--line)}
+.btn-ghost:hover{background:#f8fbff;border-color:#b9d6f5;transform:translateY(-1px)}
 .btn svg{width:17px;height:17px}
 main{padding:clamp(28px,5vw,56px) 0 64px}
 .hero{
@@ -303,6 +307,10 @@ footer{border-top:1px solid var(--line);background:rgba(255,255,255,.7)}
     </a>
     <div class="header-actions">
       <span class="count-pill"><span class="count-dot" aria-hidden="true"></span><?= $count ?> checkers</span>
+      <?php if ($user !== null): ?>
+      <span class="count-pill"><?= htmlspecialchars((string) $user['username'], ENT_QUOTES, 'UTF-8') ?></span>
+      <a class="btn btn-ghost" href="/logout.php">Sign out</a>
+      <?php endif; ?>
       <a class="btn btn-primary" href="/format-fixer.php" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M9 11h2"/></svg>
         Check your file

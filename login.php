@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 
 start_app_session();
 
@@ -21,7 +21,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $row = $stmt->fetch();
                 if (is_array($row) && password_verify($password, (string) $row['password_hash'])) {
                     login_user((int) $row['id'], (string) $row['username']);
-                    header('Location: /dashboard.php');
+                    header('Location: /showcase.php');
                     exit;
                 }
                 $error = 'Invalid credentials.';

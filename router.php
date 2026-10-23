@@ -149,7 +149,8 @@ foreach ([
     if (preg_match('#^/' . $prefix . '(?:/(.*))?$#', $path, $m)) {
         $sub = $m[1] ?? '';
         if ($sub === '' || $sub === 'index.php') { require $dir . '/index.php'; return true; }
-        if ($sub === 'saved' || $sub === 'saved.php') { require $dir . '/saved.php'; return true; }
+        if (($sub === 'saved' || $sub === 'saved.php') && is_file($dir . '/saved.php')) { require $dir . '/saved.php'; return true; }
+        if (($sub === 'details' || $sub === 'details.php') && is_file($dir . '/details.php')) { require $dir . '/details.php'; return true; }
         http_response_code(404); echo "Not found\n"; return true;
     }
 }

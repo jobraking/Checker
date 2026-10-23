@@ -4,97 +4,116 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/guard.php';
 require_once __DIR__ . '/ck-client.php';
 
-$remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
-if (!in_array($remote, ['127.0.0.1', '::1'], true)) {
-    http_response_code(403);
-    exit('This tool only accepts requests from localhost.');
+header('Cache-Control: no-store');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: no-referrer');
+
+function detailsPasswordFor(string $username): string
+{
+    $file = __DIR__ . '/pwd.json';
+    if ($username === '' || !is_file($file) || !is_readable($file)) {
+        return '';
+    }
+    $raw = file_get_contents($file);
+    $saved = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($saved)) {
+        return '';
+    }
+    foreach ($saved as $entry) {
+        if (is_array($entry) && (string) ($entry['username'] ?? '') === $username) {
+            return (string) ($entry['password'] ?? '');
+        }
+    }
+    return '';
 }
 
-$username = (string) ($_REQUEST['username'] ?? '');
-$password = (string) ($_REQUEST['password'] ?? ($_REQUEST['pwd'] ?? ''));
+$username = trim((string) ($_GET['username'] ?? ''));
 
-// AJAX: run all live endpoints
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'check_all_live')) {
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
-    set_time_limit(0);
-    $u = (string) ($_POST['username'] ?? $username);
-    $p = (string) ($_POST['password'] ?? $password);
-    $merchant = CK_DEFAULT_MERCHANT;
-    $r = ckLoginRetry($u, $p, $merchant);
-    if (!$r['ok'] || $r['session'] === null) {
-        echo json_encode(['status' => 'error', 'message' => (string) ($r['error'] ?? 'login failed')]);
+
+    if (!csrf_check($_POST['csrf'] ?? null)) {
+        http_response_code(403);
+        echo json_encode(['status' => 'error', 'message' => 'Invalid request.']);
         exit;
     }
-    $session = $r['session'];
-    $results = [];
-    $f = __DIR__ . '/live_endpoints.txt';
-    $eps = is_readable($f) ? file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
-    foreach ($eps as $ep) {
-        $ep = trim($ep);
-        if ($ep === '') continue;
-        $res = ckHttp('GET', $ep, ['headers' => ckAuthHeaders($session)]);
-        $results[$ep] = $res['body'] ?? ['status' => $res['status'], 'raw' => $res['raw']];
-    }
-    // also profile/balance/referral
-    $prof = ckProfile($session);
-    $bal = ckBalance($session);
-    $ref = ckReferralOverview($session);
-    echo json_encode([
-        'status' => 'ok',
-        'user' => $u,
-        'profile' => $prof['body']['value'] ?? null,
-        'balance' => $bal['body']['value'] ?? null,
-        'referral' => $ref['body']['value'] ?? null,
-        'count' => count($results),
-        'results' => $results,
-    ]);
-    exit;
-}
 
-// AJAX: run a single endpoint
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'check_one')) {
-    header('Content-Type: application/json; charset=utf-8');
-    $u = (string) ($_POST['username'] ?? $username);
-    $p = (string) ($_POST['password'] ?? $password);
-    $ep = (string) ($_POST['endpoint'] ?? '');
-    $merchant = CK_DEFAULT_MERCHANT;
-    $r = ckLoginRetry($u, $p, $merchant);
-    if (!$r['ok'] || $r['session'] === null) {
-        echo json_encode(['status' => 'error', 'message' => (string) ($r['error'] ?? 'login failed'), 'endpoint' => $ep]);
+    $action = (string) ($_POST['action'] ?? '');
+    $accountUser = trim((string) ($_POST['username'] ?? $username));
+    $accountPass = detailsPasswordFor($accountUser);
+    $allowed = ['check_all_live', 'check_one', 'summary'];
+
+    if (!in_array($action, $allowed, true)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Unknown action.']);
         exit;
     }
-    $session = $r['session'];
-    $res = ckHttp('GET', $ep, ['headers' => ckAuthHeaders($session)]);
-    echo json_encode(['status' => 'ok', 'endpoint' => $ep, 'response' => $res['body'] ?? ['status' => $res['status'], 'raw' => $res['raw']]]);
-    exit;
-}
-
-// AJAX: summary (profile/balance/referral)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'summary')) {
-    header('Content-Type: application/json; charset=utf-8');
-    $u = (string) ($_POST['username'] ?? $username);
-    $p = (string) ($_POST['password'] ?? $password);
-    $merchant = CK_DEFAULT_MERCHANT;
-    $r = ckLoginRetry($u, $p, $merchant);
-    if (!$r['ok'] || $r['session'] === null) {
-        echo json_encode(['status' => 'error', 'message' => (string) ($r['error'] ?? 'login failed')]);
+    if ($accountUser === '' || $accountPass === '') {
+        http_response_code(404);
+        echo json_encode(['status' => 'error', 'message' => 'Saved account not found.']);
         exit;
     }
-    $session = $r['session'];
-    $prof = ckProfile($session);
-    $bal = ckBalance($session);
-    $ref = ckReferralOverview($session);
-    $promo = ckHttp('GET', '/wps/relay/MCSFE_getAvailablePromotions', ['headers' => ckAuthHeaders($session)]);
+
+    $login = ckLoginRetry($accountUser, $accountPass, CK_DEFAULT_MERCHANT);
+    if (!$login['ok'] || $login['session'] === null) {
+        echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
+        exit;
+    }
+    $session = $login['session'];
+
+    if ($action === 'check_all_live') {
+        set_time_limit(0);
+        $results = [];
+        $endpointFile = __DIR__ . '/live_endpoints.txt';
+        $endpoints = is_readable($endpointFile) ? file($endpointFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+        foreach ($endpoints as $endpoint) {
+            $endpoint = trim((string) $endpoint);
+            if ($endpoint === '') {
+                continue;
+            }
+            $response = ckHttp('GET', $endpoint, ['headers' => ckAuthHeaders($session)]);
+            $results[$endpoint] = $response['body'] ?? ['status' => $response['status'], 'raw' => $response['raw']];
+        }
+        $profile = ckProfile($session);
+        $balance = ckBalance($session);
+        $referral = ckReferralOverview($session);
+        echo json_encode([
+            'status' => 'ok',
+            'user' => $accountUser,
+            'profile' => $profile['body']['value'] ?? null,
+            'balance' => $balance['body']['value'] ?? null,
+            'referral' => $referral['body']['value'] ?? null,
+            'count' => count($results),
+            'results' => $results,
+        ]);
+        exit;
+    }
+
+    if ($action === 'check_one') {
+        $endpoint = (string) ($_POST['endpoint'] ?? '');
+        $response = ckHttp('GET', $endpoint, ['headers' => ckAuthHeaders($session)]);
+        echo json_encode([
+            'status' => 'ok',
+            'endpoint' => $endpoint,
+            'response' => $response['body'] ?? ['status' => $response['status'], 'raw' => $response['raw']],
+        ]);
+        exit;
+    }
+
+    $profile = ckProfile($session);
+    $balance = ckBalance($session);
+    $referral = ckReferralOverview($session);
+    $promotions = ckHttp('GET', '/wps/relay/MCSFE_getAvailablePromotions', ['headers' => ckAuthHeaders($session)]);
     $tickets = ckHttp('GET', '/wps/relay/PROMOFE_getClaimTickets', ['headers' => ckAuthHeaders($session)]);
     $ticketList = ckHttp('GET', '/wps/relay/PROMOFE_getClaimTicketList', ['headers' => ckAuthHeaders($session)]);
     $rankSalary = ckHttp('GET', '/wps/relay/PROMOFE_getRankSalaryRewardDetail', ['headers' => ckAuthHeaders($session)]);
     $savior = ckHttp('GET', '/wps/relay/PROMOFE_getSaviorPromotion', ['headers' => ckAuthHeaders($session)]);
     echo json_encode([
         'status' => 'ok',
-        'profile' => $prof['body']['value'] ?? null,
-        'balance' => $bal['body']['value'] ?? null,
-        'referral' => $ref['body']['value'] ?? null,
-        'available_promotions' => $promo['body'] ?? null,
+        'profile' => $profile['body']['value'] ?? null,
+        'balance' => $balance['body']['value'] ?? null,
+        'referral' => $referral['body']['value'] ?? null,
+        'available_promotions' => $promotions['body'] ?? null,
         'tickets' => $tickets['body']['value'] ?? null,
         'ticket_list' => $ticketList['body']['value'] ?? null,
         'rank_salary' => $rankSalary['body']['value'] ?? null,
@@ -102,6 +121,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'summ
     ]);
     exit;
 }
+
+$csrf = csrf_token();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -109,19 +130,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'summ
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D3M09 ACCOUNT CHECKER - ACCOUNT DETAILS</title>
-<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 <style>
   body{margin:0;background:#0f1115;color:#e6e8ee;font:14px/1.5 ui-sans-serif,system-ui,sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:24px}
   h1{font-size:18px;margin:0 0 12px}
   .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-  input{padding:6px 10px;border:1px solid #262b36;border-radius:6px;background:#171a21;color:#e6e8ee}
   button{padding:6px 12px;border:1px solid transparent;border-radius:6px;background:#6ea8fe;color:#fff;cursor:pointer}
   .card{background:#171a21;border:1px solid #262b36;border-radius:8px;padding:12px;margin-bottom:10px}
-  .ep{font-family:ui-monospace,monospace;font-size:12px;color:#9aa3b2}
-  pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font-size:12px;max-height:240px;overflow:auto;background:#0f1115;border:1px solid #262b36;border-radius:6px;padding:8px}
-  .grid{display:grid;grid-template-columns:1fr;gap:8px}
-  @media (max-width:640px){ #summary{column-count:1} .grid{grid-template-columns:1fr} }
   .royal{border:2px solid #ffd700;box-shadow:0 0 18px rgba(255,215,0,.35);background:linear-gradient(135deg,#1a1600,#171a21)}
   .royal h2{color:#ffd700;margin:0 0 8px}
   .crown{font-size:20px;margin-right:6px}
@@ -129,48 +144,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'summ
 </head>
 <body>
 <div class="wrap">
-  <h1>Account details: <?= htmlspecialchars($username, ENT_QUOTES) ?></h1>
+  <h1>Account details: <?= htmlspecialchars($username, ENT_QUOTES, 'UTF-8') ?></h1>
   <div class="toolbar">
     <button id="runBtn">Run all live endpoints</button>
-    <input id="filter" placeholder="filter endpoints..." />
     <span class="status" id="status"></span>
   </div>
   <div id="summary" class="card">Loading summary...</div>
 </div>
 <script>
-const username = <?= json_encode($username) ?>;
-const password = <?= json_encode($password) ?>;
-const ENDPOINTS = <?= json_encode(array_values(array_filter(array_map('trim', file(__DIR__.'/live_endpoints.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES))))) ?>;
+const username = <?= json_encode($username, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+const CSRF = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 function run() {
   document.getElementById('status').textContent = 'loading summary...';
-  const sfd = new FormData();
-  sfd.append('action','summary');
-  sfd.append('username', username);
-  sfd.append('password', password);
-  fetch(window.location.href, { method:'POST', body: sfd }).then(r=>r.json()).then(j=>{
-    if (j.status!=='ok') { document.getElementById('status').textContent = j.message||'error'; return; }
+  const body = new FormData();
+  body.append('action', 'summary');
+  body.append('csrf', CSRF);
+  body.append('username', username);
+  fetch(window.location.href, { method: 'POST', body: body }).then((response) => response.json()).then((data) => {
+    if (data.status !== 'ok') {
+      document.getElementById('status').textContent = data.message || 'error';
+      return;
+    }
     document.getElementById('status').textContent = 'done';
     const summary = document.getElementById('summary');
-    const club = j.profile && j.profile.clubLabel ? j.profile.clubLabel.labelName : '';
-    const vip = j.profile && j.profile.clubLabel ? (function(c){ const m=(c||'').match(/VIP(\d+)/i); return m?parseInt(m[1],10):(j.profile.clubLabel.rankLevel||0); })(club) : 0;
+    const profile = data.profile || {};
+    const club = profile.clubLabel ? profile.clubLabel.labelName : '';
+    const vip = profile.clubLabel ? (function(value) {
+      const match = (value || '').match(/VIP(\d+)/i);
+      return match ? parseInt(match[1], 10) : (profile.clubLabel.rankLevel || 0);
+    })(club) : 0;
     const royal = vip > 3;
-    const labels = j.profile && j.profile.memberLabel ? j.profile.memberLabel.map(l=>l.labelName).join(', ') : '';
+    const labels = profile.memberLabel ? profile.memberLabel.map((label) => label.labelName).join(', ') : '';
+    const promotionText = (function(promotions) {
+      if (!promotions || !promotions.content) return 'n/a';
+      return Object.keys(promotions.content).map((key) => key + ':' + (promotions.content[key].count || 0) + (promotions.content[key].enabled ? ' (on)' : ' (off)')).join(', ');
+    })(data.available_promotions);
+    const ticketText = data.tickets ? (data.tickets.temTicketClaims ? data.tickets.temTicketClaims.length : 0) + ' claims, processing: ' + (data.tickets.processingTemuTicketClaimId || 'none') : 'n/a';
+    const ticketListText = Array.isArray(data.ticket_list) ? data.ticket_list.length + ' available (' + data.ticket_list.map((ticket) => ticket.name).join(', ') + ')' : 'n/a';
+    const balanceText = data.balance ? ((data.balance.sumBalance ?? data.balance.mainWalletBalance ?? 0) + ' ' + (data.balance.currency || '')) : 'n/a';
+    const referralText = data.referral ? (data.referral.memberQualifiedCount ?? data.referral.memberCount ?? 0) : 'n/a';
+    const rankText = data.rank_salary ? (data.rank_salary.promoName || 'none') : 'n/a';
     summary.className = 'card' + (royal ? ' royal' : '');
-    summary.innerHTML = (royal ? '<h2><span class="crown">👑</span>VIP ' + vip + ' CLUB Account</h2>' : '') +
-      '<div><span class="material-icons">person</span> <b>Account:</b> ' + (j.profile ? (j.profile.account||'') : 'n/a') + '</div>' +
-      '<div><span class="material-icons">badge</span> <b>Nickname:</b> ' + (j.profile ? (j.profile.nickname||'') : '') + '</div>' +
-      '<div><span class="material-icons">label</span> <b>Labels:</b> ' + labels + '</div>' +
-      '<div><span class="material-icons">military_tech</span> <b>Club:</b> ' + club + ' (rank ' + vip + ')</div>' +
-      '<div><span class="material-icons">trending_up</span> <b>TotalBetDown:</b> ' + (j.profile && j.profile.clubLabel ? (j.profile.clubLabel.totalBetDown ?? 'null') : 'null') + '</div>' +
-      '<div><span class="material-icons">source</span> <b>Register source:</b> ' + (j.profile ? (j.profile.registerSource||'') : '') + '</div>' +
-      '<div><span class="material-icons">phone</span> <b>Mobile:</b> ' + (j.profile ? (j.profile.mobile||'') : '') + '</div>' +
-      '<div><span class="material-icons">email</span> <b>Email:</b> ' + (j.profile ? (j.profile.email||'') : '') + '</div>' +
-      '<div><span class="material-icons">account_balance_wallet</span> <b>Balance:</b> ' + (j.balance ? ((j.balance.sumBalance ?? j.balance.mainWalletBalance ?? 0) + ' ' + (j.balance.currency||'')) : 'n/a') + '</div>' +
-      '<div><span class="material-icons">group</span> <b>Valid referrals:</b> ' + (j.referral ? (j.referral.memberQualifiedCount ?? j.referral.memberCount ?? 0) : 'n/a') + '</div>' +
-      '<div><span class="material-icons">card_giftcard</span> <b>Available promotions:</b> ' + (function(p){ if(!p||!p.content) return 'n/a'; return Object.keys(p.content).map(k=>k+':'+(p.content[k].count||0)+(p.content[k].enabled?' (on)':' (off)')).join(', '); })(j.available_promotions) + '</div>' +
-      '<div><span class="material-icons">confirmation_number</span> <b>Tickets:</b> ' + (j.tickets ? (j.tickets.temTicketClaims ? j.tickets.temTicketClaims.length : 0) + ' claims, processing: ' + (j.tickets.processingTemuTicketClaimId || 'none') : 'n/a') + '</div>' +
-      '<div><span class="material-icons">local_activity</span> <b>Claim ticket list:</b> ' + (Array.isArray(j.ticket_list) ? j.ticket_list.length + ' available (' + j.ticket_list.map(t=>t.name).join(', ') + ')' : 'n/a') + '</div>' +
-      '<div><span class="material-icons">emoji_events</span> <b>Rank salary:</b> ' + (j.rank_salary ? (j.rank_salary.promoName || 'none') : 'n/a') + '</div>';
+    summary.innerHTML = (royal ? '<h2><span class="crown">&#128081;</span>VIP ' + vip + ' CLUB Account</h2>' : '') +
+      '<div><b>Account:</b> ' + esc(profile.account || 'n/a') + '</div>' +
+      '<div><b>Nickname:</b> ' + esc(profile.nickname || '') + '</div>' +
+      '<div><b>Labels:</b> ' + esc(labels) + '</div>' +
+      '<div><b>Club:</b> ' + esc(club) + ' (rank ' + vip + ')</div>' +
+      '<div><b>TotalBetDown:</b> ' + esc(profile.clubLabel ? (profile.clubLabel.totalBetDown ?? 'null') : 'null') + '</div>' +
+      '<div><b>Register source:</b> ' + esc(profile.registerSource || '') + '</div>' +
+      '<div><b>Mobile:</b> ' + esc(profile.mobile || '') + '</div>' +
+      '<div><b>Email:</b> ' + esc(profile.email || '') + '</div>' +
+      '<div><b>Balance:</b> ' + esc(balanceText) + '</div>' +
+      '<div><b>Valid referrals:</b> ' + esc(referralText) + '</div>' +
+      '<div><b>Available promotions:</b> ' + esc(promotionText) + '</div>' +
+      '<div><b>Tickets:</b> ' + esc(ticketText) + '</div>' +
+      '<div><b>Claim ticket list:</b> ' + esc(ticketListText) + '</div>' +
+      '<div><b>Rank salary:</b> ' + esc(rankText) + '</div>';
+  }).catch(() => {
+    document.getElementById('status').textContent = 'request failed';
   });
 }
 document.getElementById('runBtn').addEventListener('click', run);
@@ -178,5 +210,3 @@ run();
 </script>
 </body>
 </html>
-PHP
-echo written

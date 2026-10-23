@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/db.php';
+require_once __DIR__ . '/db.php';
 
 function start_app_session(): void
 {
@@ -12,6 +12,7 @@ function start_app_session(): void
     session_start([
         'cookie_httponly' => true,
         'cookie_samesite' => 'Lax',
+        'cookie_secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
         'use_strict_mode' => true,
     ]);
 }

@@ -1,8 +1,6 @@
 <?php
 declare(strict_types=1);
 
-require_once dirname(__DIR__) . '/guard.php';
-
 require_once __DIR__ . '/guard.php';
 
 $sites = [
@@ -21,7 +19,7 @@ $sites = [
 ];
 
 $stats = [
-    ['value' => '46', 'label' => 'Live deployments'],
+    ['value' => '42', 'label' => 'Live deployments'],
     ['value' => '4.3k', 'label' => 'Lines per node'],
     ['value' => '2', 'label' => 'Crypto layers'],
     ['value' => '0', 'label' => 'Remote dependencies'],
@@ -50,7 +48,7 @@ $features = [
     ],
     [
         'title' => 'Local-only surface',
-        'body' => 'Every node refuses requests that did not originate from loopback. Sessions are one-shot and passwords are not kept in memory.',
+        'body' => 'Every checker and saved vault requires a signed-in session. CSRF tokens guard mutations and passwords are never written to the PHP session.',
     ],
 ];
 
@@ -294,8 +292,8 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
               Launch a checker
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
             </a>
-            <a class="btn btn-ghost" href="/showcase.php">Browse all 46</a>
-            <span class="hero-note">Loopback only</span>
+            <a class="btn btn-ghost" href="/showcase.php">Browse all 42</a>
+            <span class="hero-note">Login required</span>
           </div>
           <ul class="stats">
             <?php foreach ($stats as $stat): ?>
@@ -393,7 +391,7 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
 <footer>
   <div class="shell footer-inner">
     <span><strong>D3M09 Checker</strong> · local account console</span>
-    <span>Loopback access · no telemetry</span>
+    <span>Session access · no telemetry</span>
   </div>
 </footer>
 </body>

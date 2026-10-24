@@ -197,11 +197,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pass = (string) ($_POST['pass'] ?? '');
         $captcha = trim((string) ($_POST['captcha'] ?? ''));
         $captchaId = (string) ($_POST['captcha_id'] ?? ($_SESSION['captcha_id'] ?? ''));
+        $geetest = null;
+        $geetestRaw = (string) ($_POST['geetest'] ?? '');
+        if ($geetestRaw !== '') {
+            $decoded = json_decode($geetestRaw, true);
+            if (is_array($decoded)) {
+                $geetest = $decoded;
+            }
+        }
         if ($user === '' || $pass === '') {
             echo json_encode(['user' => $user, 'status' => 'malformed', 'token' => null, 'error' => 'missing credentials']);
             exit;
         }
-        $r = ckLoginRetry($user, $pass, $merchant, null, 1, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null);
+        $r = ckLoginRetry($user, $pass, $merchant, null, 1, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null, $geetest);
         if ($r['ok'] && $r['session'] !== null) {
             $prof = ckProfile($r['session']);
             $v = is_array($prof['body']) ? ($prof['body']['value'] ?? $prof['body']['data'] ?? []) : [];
@@ -258,7 +266,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($cap['image'] !== null) {
                     $_SESSION['captcha_image'] = $cap['image'];
                 }
-                echo json_encode([
+                $capOut = [
                     'user'          => $user,
                     'status'        => 'captcha',
                     'token'         => null,
@@ -267,7 +275,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'error'         => $errMsg,
                     'captcha_image' => $cap['image'],
                     'captcha_id'    => $cap['id'],
-                ]);
+                ];
+                $gt = ckGeetestMeta($merchant);
+                if ($gt['gt'] !== null) {
+                    $capOut['geetest'] = ['gt' => $gt['gt'], 'version' => $gt['version']];
+                }
+                echo json_encode($capOut);
             } else {
                 echo json_encode(['user' => $user, 'status' => 'invalid', 'token' => null, 'details' => null, 'balance' => null, 'error' => null]);
             }
@@ -306,8 +319,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pass     = $parts[1] ?? '';
         $captcha  = trim((string) ($_POST['captcha'] ?? ''));
         $captchaId = (string) ($_SESSION['captcha_id'] ?? '');
+        $geetest  = null;
+        $geetestRaw = (string) ($_POST['geetest'] ?? '');
+        if ($geetestRaw !== '') {
+            $decoded = json_decode($geetestRaw, true);
+            if (is_array($decoded)) {
+                $geetest = $decoded;
+            }
+        }
 
-        $result = ckLoginRetry($user, $pass, $merchant, null, 3, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null);
+        $result = ckLoginRetry($user, $pass, $merchant, null, 3, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null, $geetest);
 
         if ($result['ok'] && $result['session'] !== null) {
             // Store only the session token -- never the password.
@@ -378,13 +399,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if ($isAjax) {
                 header('Content-Type: application/json; charset=utf-8');
-                echo json_encode([
+                $payloadOut = [
                     'status'        => 'error',
                     'message'       => $errMsg,
                     'code'          => $result['code'],
                     'captcha'       => !empty($_SESSION['captcha_image']),
                     'captcha_image' => $_SESSION['captcha_image'] ?? null,
-                ]);
+                ];
+                if (stripos($errMsg, 'captcha') !== false || stripos($errCode, 'captcha') !== false) {
+                    $gt = ckGeetestMeta($merchant);
+                    if ($gt['gt'] !== null) {
+                        $payloadOut['geetest'] = ['gt' => $gt['gt'], 'version' => $gt['version']];
+                    }
+                }
+                echo json_encode($payloadOut);
                 exit;
             }
         }
@@ -1080,9 +1108,52 @@ function askCaptcha(src) {
   });
 }
 
+let geetestSdk = null;
+function loadGeetestSdk() {
+  if (window.initGeetest4) return Promise.resolve();
+  if (geetestSdk) return geetestSdk;
+  geetestSdk = new Promise(function (resolve, reject) {
+    const s = document.createElement('script');
+    s.src = 'https://static.geetest.com/v4/gt4.js';
+    s.async = true;
+    s.onload = function () { resolve(); };
+    s.onerror = function () { reject(new Error('Could not load the captcha SDK.')); };
+    document.head.appendChild(s);
+  });
+  return geetestSdk;
+}
+
+function solveGeetest(gt) {
+  return new Promise(function (resolve, reject) {
+    loadGeetestSdk().then(function () {
+      if (typeof window.initGeetest4 !== 'function') {
+        reject(new Error('Captcha widget unavailable.'));
+        return;
+      }
+      window.initGeetest4({ captchaId: gt, product: 'float', language: 'en', hideSuccess: true }, function (captcha) {
+        if (!captcha) {
+          reject(new Error('Captcha init failed.'));
+          return;
+        }
+        captcha.onSuccess(function () {
+          const v = captcha.getValidate ? captcha.getValidate() : null;
+          if (!v) {
+            reject(new Error('Captcha validation missing.'));
+            return;
+          }
+          resolve(v);
+        });
+        captcha.onError(function () { reject(new Error('Captcha failed.')); });
+        captcha.showCaptcha();
+      });
+    }).catch(reject);
+  });
+}
+
 (function singleCheck() {
   const form = $('singleForm');
   if (!form) return;
+  let pendingGeetest = null;
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     const btn = $('singleBtn');
@@ -1093,6 +1164,10 @@ function askCaptcha(src) {
     showStatus(status, 'Checking account…', 'info');
     const fd = new FormData(form);
     fd.set('action', 'login');
+    if (pendingGeetest) {
+      fd.set('geetest', JSON.stringify(pendingGeetest));
+      pendingGeetest = null;
+    }
     try {
       const res = await fetch(window.location.href, {
         method: 'POST',
@@ -1118,6 +1193,17 @@ function askCaptcha(src) {
         if (result) {
           result.hidden = false;
           result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      } else if (j.geetest && j.geetest.gt) {
+        showStatus(status, 'Complete the captcha to continue…', 'info');
+        try {
+          pendingGeetest = await solveGeetest(j.geetest.gt);
+          if (btn) btn.disabled = false;
+          form.requestSubmit();
+          return;
+        } catch (err) {
+          pendingGeetest = null;
+          showStatus(status, err.message || 'Captcha failed.', 'error');
         }
       } else {
         showStatus(status, j.message || 'Check failed.', 'error');
@@ -1303,15 +1389,29 @@ function askCaptcha(src) {
         if (j.status === 'captcha') {
           row.pill.className = 'pill warn';
           row.pill.textContent = 'Captcha';
-          const code = await askCaptcha(j.captcha_image);
-          if (code) {
-            j = await post({
-              action: 'bulk_check_one',
-              user: state.user,
-              pass: state.pass,
-              captcha: code,
-              captcha_id: j.captcha_id || ''
-            });
+          if (j.geetest && j.geetest.gt) {
+            try {
+              const v = await solveGeetest(j.geetest.gt);
+              j = await post({
+                action: 'bulk_check_one',
+                user: state.user,
+                pass: state.pass,
+                geetest: JSON.stringify(v)
+              });
+            } catch (err) {
+              j = { status: 'error', message: err.message };
+            }
+          } else {
+            const code = await askCaptcha(j.captcha_image);
+            if (code) {
+              j = await post({
+                action: 'bulk_check_one',
+                user: state.user,
+                pass: state.pass,
+                captcha: code,
+                captcha_id: j.captcha_id || ''
+              });
+            }
           }
         }
       } catch (err) {

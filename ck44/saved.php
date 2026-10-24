@@ -579,6 +579,7 @@ details.raw pre{
     <nav class="nav" aria-label="Primary">
       <a href="./">Checker</a>
       <a class="active" href="saved.php" aria-current="page">Saved</a>
+      <a href="/logout.php">Sign out</a>
     </nav>
   </div>
 </header>

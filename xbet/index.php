@@ -75,6 +75,7 @@ h1 span{color:var(--brand)}
       </span>
     </a>
     <a class="btn" href="/">All checkers</a>
+    <a class="btn" href="/logout.php">Sign out</a>
   </div>
 </header>
 

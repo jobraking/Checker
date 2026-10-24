@@ -724,6 +724,7 @@ code{
       <a href="#bulk">Bulk</a>
       <a href="./saved.php">Saved</a>
       <a class="nav-cta" href="/">All checkers</a>
+      <a href="/logout.php">Sign out</a>
     </nav>
   </div>
 </header>

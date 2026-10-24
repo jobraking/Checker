@@ -42,24 +42,12 @@ $bulkResults = null;   // results of a bulk credential check
 $balance = null;
 
 /**
- * Resolve the merchant once per session instead of asking the user for it.
- * CK_MERCHANT in the environment overrides the detection.
+ * Resolve the merchant automatically for this checker. Detection is cached
+ * per node, so one checker never reuses another checker's merchant.
  */
 function resolveMerchant(bool $force = false): array
 {
-    if (!$force && !empty($_SESSION['merchant'])) {
-        return [
-            'merchant' => (string) $_SESSION['merchant'],
-            'source'   => (string) ($_SESSION['merchant_source'] ?? 'cached'),
-        ];
-    }
-    $det = ckDetectMerchant();
-    if ($det['merchant'] === null) {
-        return ['merchant' => CK_DEFAULT_MERCHANT, 'source' => 'fallback', 'error' => $det['error']];
-    }
-    $_SESSION['merchant'] = $det['merchant'];
-    $_SESSION['merchant_source'] = $det['source'];
-    return ['merchant' => $det['merchant'], 'source' => $det['source'], 'error' => null];
+    return ckResolveMerchant($force);
 }
 
 /**
@@ -392,11 +380,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$merchantInfo = [
-    'merchant' => (string) ($_SESSION['merchant'] ?? CK_DEFAULT_MERCHANT),
-    'source'   => (string) ($_SESSION['merchant_source'] ?? 'default'),
-    'error'    => null,
-];
+$merchantInfo = resolveMerchant();
 
 $session = $_SESSION['ck'] ?? null;
 $profile = null;

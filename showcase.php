@@ -83,6 +83,7 @@ $items = [
     ['href'=>'/ck44/','title'=>'CK Checker','desc'=>'ck444.ai accounts','domain'=>'ck444.ai'],
     ['href'=>'/cv666/','title'=>'CV Checker','desc'=>'cv666 accounts','domain'=>'cv666app.net'],
     ['href'=>'/cbaji8/','title'=>'Cbaji8 Checker','desc'=>'cbaji8 accounts','domain'=>'cbaji8.club'],
+    ['href'=>'/fb/','title'=>'FB Checker','desc'=>'Facebook accounts','domain'=>'facebook.com'],
     ['href'=>'/gbajee53/','title'=>'Gbajee53 Checker','desc'=>'gbajee53 accounts','domain'=>'gbajee53.vip'],
     ['href'=>'/jaya9bangla/','title'=>'Jaya9bangla Checker','desc'=>'jaya9bangla accounts','domain'=>'ck444.ai'],
     ['href'=>'/kx8/','title'=>'KX8 Checker','desc'=>'kx8.info accounts','domain'=>'kx8.info'],

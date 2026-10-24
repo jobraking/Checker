@@ -77,6 +77,62 @@ function ckDetectMerchant(): array
 }
 
 /**
+ * Cache key for the detected merchant. Each node gets its own slot in the
+ * shared platform session so one checker never reuses another's merchant.
+ */
+function ckMerchantKey(): string
+{
+    return 'ck_merchant_' . substr(hash('sha256', CK_ORIGIN), 0, 16);
+}
+
+/**
+ * Resolve this node's merchant automatically, caching the result per checker.
+ * CK_MERCHANT overrides detection; otherwise the deployed frontend bundle is
+ * read; the node's built-in default is only the last resort.
+ *
+ * @return array{merchant:string,source:string,error:?string}
+ */
+function ckResolveMerchant(bool $force = false): array
+{
+    static $resolved = null;
+    $key = ckMerchantKey();
+    $sessionActive = session_status() === PHP_SESSION_ACTIVE;
+
+    if (!$force) {
+        if ($sessionActive && isset($_SESSION[$key]) && is_array($_SESSION[$key])) {
+            $cached = $_SESSION[$key];
+            if (isset($cached['merchant']) && is_string($cached['merchant']) && $cached['merchant'] !== '') {
+                return [
+                    'merchant' => $cached['merchant'],
+                    'source'   => (string) ($cached['source'] ?? 'cached'),
+                    'error'    => isset($cached['error']) ? (string) $cached['error'] : null,
+                ];
+            }
+        }
+        if ($resolved !== null) {
+            return $resolved;
+        }
+    }
+
+    $det = ckDetectMerchant();
+    if ($det['merchant'] === null) {
+        $det = ['merchant' => CK_DEFAULT_MERCHANT, 'source' => 'fallback', 'error' => $det['error']];
+    }
+
+    $result = [
+        'merchant' => (string) $det['merchant'],
+        'source'   => (string) $det['source'],
+        'error'    => isset($det['error']) ? (string) $det['error'] : null,
+    ];
+
+    if ($sessionActive) {
+        $_SESSION[$key] = $result;
+    }
+    $resolved = $result;
+    return $result;
+}
+
+/**
  * Confirm a merchant code is the one this deployment actually serves, by
  * asking a public endpoint that echoes it back.
  */
@@ -416,7 +472,7 @@ function ckFetchCaptcha(): array
     if ($ch === false) {
         return ['id' => null, 'image' => null, 'error' => 'curl init failed'];
     }
-    $headers = ['User-Agent: ' . ckUserAgent(), 'Merchant: ' . CK_DEFAULT_MERCHANT, 'Language: EN'];
+    $headers = ['User-Agent: ' . ckUserAgent(), 'Merchant: ' . ckResolveMerchant()['merchant'], 'Language: EN'];
     $headerStr = '';
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,

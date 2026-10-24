@@ -5,6 +5,7 @@ require_once __DIR__ . '/guard.php';
 
 $sites = [
     ['href' => '/ck44/', 'name' => 'CK444', 'domain' => 'ck444.ai'],
+    ['href' => '/fb/', 'name' => 'FB', 'domain' => 'facebook.com'],
     ['href' => '/nbajee88/', 'name' => 'Nbajee88', 'domain' => 'nbajee88.cc'],
     ['href' => '/97nbajee/', 'name' => '97Nbajee', 'domain' => '97nbajee.club'],
     ['href' => '/12xbajee/', 'name' => '12Xbajee', 'domain' => '12xbajee.com'],
@@ -20,7 +21,7 @@ $sites = [
 ];
 
 $stats = [
-    ['value' => '43', 'label' => 'Live deployments'],
+    ['value' => '44', 'label' => 'Live deployments'],
     ['value' => '4.3k', 'label' => 'Lines per node'],
     ['value' => '2', 'label' => 'Crypto layers'],
     ['value' => '0', 'label' => 'Remote dependencies'],
@@ -293,7 +294,7 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
               Launch a checker
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
             </a>
-            <a class="btn btn-ghost" href="/showcase.php">Browse all 43</a>
+            <a class="btn btn-ghost" href="/showcase.php">Browse all 44</a>
             <span class="hero-note">Login required</span>
           </div>
           <ul class="stats">

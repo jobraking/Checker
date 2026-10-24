@@ -7,6 +7,7 @@ $path = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/
 
 $ck = __DIR__ . '/ck44';
 $kx8 = __DIR__ . '/kx8';
+$fb = __DIR__ . '/fb';
 $ppv = __DIR__ . '/ppvip10';
 $cv = __DIR__ . '/cv666';
 $ja = __DIR__ . '/jaya9bangla';
@@ -81,6 +82,7 @@ $items = [
     ['href'=>'/bk3333/','title'=>'Bk3333 Checker','desc'=>'3333bk accounts','domain'=>'3333bk.com'],
     ['href'=>'/ck44/','title'=>'CK Checker','desc'=>'ck444.ai accounts','domain'=>'ck444.ai'],
     ['href'=>'/cv666/','title'=>'CV Checker','desc'=>'cv666 accounts','domain'=>'cv666app.net'],
+    ['href'=>'/fb/','title'=>'FB Checker','desc'=>'Facebook accounts','domain'=>'facebook.com'],
     ['href'=>'/cbaji8/','title'=>'Cbaji8 Checker','desc'=>'cbaji8 accounts','domain'=>'cbaji8.club'],
     ['href'=>'/gbajee53/','title'=>'Gbajee53 Checker','desc'=>'gbajee53 accounts','domain'=>'gbajee53.vip'],
     ['href'=>'/jaya9bangla/','title'=>'Jaya9bangla Checker','desc'=>'jaya9bangla accounts','domain'=>'ck444.ai'],
@@ -104,6 +106,7 @@ if ($path === '/showcase' || $path === '/showcase.php') { require __DIR__ . '/sh
 foreach ([
     'ck44' => $ck,
     'kx8' => $kx8,
+    'fb' => $fb,
     'ppvip10' => $ppv,
     'cv666' => $cv,
     'jaya9bangla' => $ja,

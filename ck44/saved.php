@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
     if ($postedCsrf === '' || !hash_equals($csrf, $postedCsrf)) {
         http_response_code(400);
-        if ($action === 'check_balance' || $action === 'check_all_live') {
+        if ($action === 'check_balance' || $action === 'check_all_live' || $action === 'live_balance') {
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['status' => 'error', 'message' => 'Invalid CSRF token. Reload the page.']);
         } else {
@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $merchant = CK_DEFAULT_MERCHANT;
+        $merchant = ckResolveMerchant()['merchant'];
         $session = [
             'token'        => (string) ($entry['token'] ?? ''),
             'merchantCode' => $merchant,
@@ -156,6 +156,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if ($action === 'live_balance') {
+        header('Content-Type: application/json; charset=utf-8');
+        set_time_limit(60);
+
+        $entry = null;
+        foreach ($list as $candidate) {
+            if (($candidate['username'] ?? '') === $wantedUser) {
+                $entry = $candidate;
+                break;
+            }
+        }
+        if ($entry === null) {
+            echo json_encode(['status' => 'error', 'message' => 'Account not found']);
+            exit;
+        }
+
+        $merchant = ckResolveMerchant()['merchant'];
+
+        // Release the session lock so the page can refresh several balances
+        // in parallel instead of queueing every request behind this one.
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        $session = [
+            'token'        => (string) ($entry['token'] ?? ''),
+            'merchantCode' => $merchant,
+            'userName'     => $wantedUser,
+        ];
+
+        $prof = ckProfile($session);
+        if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
+            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            if (!$login['ok'] || $login['session'] === null) {
+                echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
+                exit;
+            }
+            $session = $login['session'];
+        }
+
+        $balRes = ckBalance($session);
+        $balance = null;
+        $rawBalance = $balRes['body']['value'] ?? null;
+        if (is_array($rawBalance)) {
+            if (isset($rawBalance['sumBalance'])) {
+                $balance = $rawBalance['sumBalance'];
+            } elseif (isset($rawBalance['mainWalletBalance'])) {
+                $balance = $rawBalance['mainWalletBalance'];
+            } elseif (isset($rawBalance['balance'][0]['balance'])) {
+                $balance = $rawBalance['balance'][0]['balance'];
+            }
+        }
+
+        $error = $balRes['error'];
+        if ($error === null && is_array($balRes['body']) && ($balRes['body']['success'] ?? null) === false) {
+            $error = (string) ($balRes['body']['message'] ?? 'balance rejected');
+        }
+
+        echo json_encode([
+            'status'     => 'ok',
+            'user'       => $wantedUser,
+            'balance'    => $balance,
+            'error'      => $error,
+            'checked_at' => gmdate('c'),
+        ]);
+        exit;
+    }
     if ($action === 'check_all_live') {
         header('Content-Type: application/json; charset=utf-8');
         set_time_limit(0);
@@ -172,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $merchant = CK_DEFAULT_MERCHANT;
+        $merchant = ckResolveMerchant()['merchant'];
         $session = [
             'token'        => (string) ($entry['token'] ?? ''),
             'merchantCode' => $merchant,
@@ -472,6 +539,9 @@ main{padding:0 0 56px}
   background:#fff;border:1px solid var(--line);padding:2px 7px;border-radius:6px;color:#334155;
 }
 .secret.revealed{background:var(--brand-soft);border-color:#c8f2e3;color:var(--brand-dark)}
+.balance-amount{font-size:.8rem;font-weight:800;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums;text-align:right;word-break:break-word}
+.balance-amount[data-state="pending"]{color:var(--muted);font-weight:700}
+.balance-amount[data-state="error"]{color:var(--danger);font-weight:700}
 .icon-btn{
   width:27px;height:27px;padding:0;border-radius:8px;border:1px solid var(--line);
   background:#fff;color:var(--muted);display:grid;place-items:center;cursor:pointer;flex:none;
@@ -700,6 +770,13 @@ details.raw pre{
               Token
             </span>
             <code class="secret" title="Masked session token"><?= h(ckMaskToken($account['token'])) ?></code>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg>
+              Live balance
+            </span>
+            <span class="balance-amount js-card-balance" data-state="pending">Loading…</span>
           </div>
         </div>
 
@@ -1102,6 +1179,9 @@ details.raw pre{
         throw new Error((data && data.message) || 'Check failed');
       }
       renderLive(panel, data);
+      if (data.balance !== null && data.balance !== undefined && data.balance !== '') {
+        setCardBalance(card, formatValue(data.balance) + ' BDT', 'ok', 'Live balance');
+      }
     } catch (error) {
       showError(panel, error && error.message ? error.message : 'Check failed');
     } finally {
@@ -1190,6 +1270,94 @@ details.raw pre{
     checkVisible.disabled = false;
   });
 
+  function setCardBalance(card, text, state, title) {
+    var amount = card.querySelector('.js-card-balance');
+    if (!amount) {
+      return;
+    }
+    amount.textContent = text;
+    amount.setAttribute('data-state', state);
+    if (title) {
+      amount.setAttribute('title', title);
+    } else {
+      amount.removeAttribute('title');
+    }
+  }
+
+  async function loadCardBalance(card) {
+    var user = card.getAttribute('data-user');
+    if (!user) {
+      return;
+    }
+    setCardBalance(card, 'Loading…', 'pending');
+
+    var body = new FormData();
+    body.append('csrf', CSRF);
+    body.append('action', 'live_balance');
+    body.append('user', user);
+
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = window.setTimeout(function () {
+      if (controller) {
+        controller.abort();
+      }
+    }, 45000);
+
+    try {
+      var response = await fetch(window.location.href, {
+        method: 'POST',
+        body: body,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        signal: controller ? controller.signal : undefined
+      });
+      var text = await response.text();
+      var data;
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        throw new Error('Unexpected server response');
+      }
+      if (!data || data.status !== 'ok') {
+        throw new Error((data && data.message) || 'Balance check failed');
+      }
+      if (data.balance === null || data.balance === undefined || data.balance === '') {
+        setCardBalance(card, 'n/a', 'error', data.error || 'No balance returned');
+        return;
+      }
+      var stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setCardBalance(card, formatValue(data.balance) + ' BDT', 'ok', 'Live balance · ' + stamp);
+    } catch (error) {
+      var message = error && error.name === 'AbortError'
+        ? 'Timed out'
+        : (error && error.message ? error.message : 'Balance check failed');
+      setCardBalance(card, 'Unavailable', 'error', message);
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  async function autoLoadBalances() {
+    var queue = cards.slice();
+    var workers = Math.min(3, queue.length);
+    var running = [];
+    for (var index = 0; index < workers; index++) {
+      running.push((async function () {
+        while (queue.length) {
+          var card = queue.shift();
+          if (!card) {
+            break;
+          }
+          await loadCardBalance(card);
+          await new Promise(function (resolve) {
+            window.setTimeout(resolve, 150);
+          });
+        }
+      })());
+    }
+    await Promise.all(running);
+  }
+
+  autoLoadBalances();
   search.addEventListener('input', applyFilters);
   levelFilter.addEventListener('change', applyFilters);
   royalOnly.addEventListener('change', applyFilters);

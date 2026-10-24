@@ -57,7 +57,7 @@ if ($auditFp === false) {
 }
 
 $results = ['valid' => 0, 'invalid' => 0, 'error' => 0];
-$merchant = CK_DEFAULT_MERCHANT;
+$merchant = ckResolveMerchant()['merchant'];
 
 foreach ($records as $i => $rec) {
     $username = $rec['username'];

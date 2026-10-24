@@ -54,7 +54,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         exit;
     }
 
-    $login = ckLoginRetry($accountUser, $accountPass, CK_DEFAULT_MERCHANT);
+    $login = ckLoginRetry($accountUser, $accountPass, ckResolveMerchant()['merchant']);
     if (!$login['ok'] || $login['session'] === null) {
         echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
         exit;

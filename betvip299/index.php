@@ -246,7 +246,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $errMsg = (string) ($r['error'] ?? '');
             $errCode = (string) ($r['code'] ?? '');
-            if (stripos($errMsg, 'captcha') !== false || stripos($errCode, 'captcha') !== false) {
+            $captchaHit = stripos($errMsg, 'captcha') !== false
+                || stripos($errCode, 'captcha') !== false
+                || stripos($errMsg, 'verification code') !== false
+                || stripos($errCode, 'geetest') !== false;
+            if ($captchaHit) {
                 $bulkMode = (string) ($_POST['bulk'] ?? '') !== '' || (string) ($_POST['no_captcha'] ?? '') === '1';
                 if ($bulkMode) {
                     echo json_encode([
@@ -1121,37 +1125,47 @@ function loadGeetestSdk() {
 
 function solveGeetest(gt) {
   return new Promise(function (resolve, reject) {
+    let settled = false;
+    const timer = setTimeout(function () {
+      if (!settled) { settled = true; reject(new Error('Captcha widget did not load.')); }
+    }, 20000);
     loadGeetestSdk().then(function () {
       if (typeof window.initGeetest4 !== 'function') {
+        clearTimeout(timer);
         reject(new Error('Captcha widget unavailable.'));
         return;
       }
-      window.initGeetest4({ captchaId: gt, product: 'bind', language: 'en', hideSuccess: true }, function (captcha) {
+      window.initGeetest4({ captchaId: gt, product: 'float', language: 'en', hideSuccess: true }, function (captcha) {
         if (!captcha) {
+          clearTimeout(timer);
           reject(new Error('Captcha init failed.'));
           return;
         }
         captcha.onSuccess(function () {
           const v = captcha.getValidate ? captcha.getValidate() : null;
           if (!v) {
+            clearTimeout(timer);
             reject(new Error('Captcha validation missing.'));
             return;
           }
+          settled = true;
+          clearTimeout(timer);
           resolve(v);
         });
-        captcha.onError(function () { reject(new Error('Captcha failed.')); });
+        captcha.onError(function () { clearTimeout(timer); reject(new Error('Captcha failed.')); });
         if (typeof captcha.onClose === 'function') {
-          captcha.onClose(function () { reject(new Error('Captcha closed.')); });
+          captcha.onClose(function () { clearTimeout(timer); reject(new Error('Captcha closed.')); });
         }
         if (typeof captcha.onReady === 'function') {
-          captcha.onReady(function () {
-            captcha.showCaptcha();
-          });
+          captcha.onReady(function () { captcha.showCaptcha(); });
         } else {
           captcha.showCaptcha();
         }
       });
-    }).catch(reject);
+    }).catch(function (err) {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -1382,6 +1396,7 @@ function solveGeetest(gt) {
     let valid = 0;
     let invalid = 0;
     let errors = 0;
+    let captchas = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const state = { user: lines[i][0], pass: lines[i][1] };
@@ -1394,10 +1409,6 @@ function solveGeetest(gt) {
         j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
       } catch (err) {
         j = { status: 'error', message: err.message };
-      }
-
-      if (j.status === 'captcha') {
-        j = { status: 'error', message: 'Captcha' };
       }
 
       if (j.status === 'valid') {
@@ -1423,6 +1434,13 @@ function solveGeetest(gt) {
         row.pill.className = 'pill err';
         row.pill.textContent = 'Invalid';
         addActions(row.actions, state, row, false);
+      } else if (j.status === 'captcha') {
+        captchas++;
+        row.pill.className = 'pill warn';
+        row.pill.textContent = 'Captcha';
+        row.sub.hidden = false;
+        row.sub.textContent = 'Use Single check to solve it';
+        addActions(row.actions, state, row, false);
       } else {
         errors++;
         row.pill.className = 'pill err';
@@ -1439,6 +1457,7 @@ function solveGeetest(gt) {
     btn.disabled = false;
     btn.querySelector('span').textContent = 'Check all';
     let summary = lines.length + ' checked · ' + valid + ' valid · ' + invalid + ' invalid';
+    if (captchas) summary += ' · ' + captchas + ' captcha' + (captchas === 1 ? '' : 's');
     if (errors) summary += ' · ' + errors + ' error' + (errors === 1 ? '' : 's');
     showStatus(status, summary, valid > 0 ? 'ok' : 'info');
   });

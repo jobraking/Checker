@@ -1114,7 +1114,7 @@ function solveGeetest(gt) {
         reject(new Error('Captcha widget unavailable.'));
         return;
       }
-      window.initGeetest4({ captchaId: gt, product: 'float', language: 'en', hideSuccess: true }, function (captcha) {
+      window.initGeetest4({ captchaId: gt, product: 'bind', language: 'en', hideSuccess: true }, function (captcha) {
         if (!captcha) {
           reject(new Error('Captcha init failed.'));
           return;
@@ -1128,7 +1128,16 @@ function solveGeetest(gt) {
           resolve(v);
         });
         captcha.onError(function () { reject(new Error('Captcha failed.')); });
-        captcha.showCaptcha();
+        if (typeof captcha.onClose === 'function') {
+          captcha.onClose(function () { reject(new Error('Captcha closed.')); });
+        }
+        if (typeof captcha.onReady === 'function') {
+          captcha.onReady(function () {
+            captcha.showCaptcha();
+          });
+        } else {
+          captcha.showCaptcha();
+        }
       });
     }).catch(reject);
   });
@@ -1188,6 +1197,7 @@ function solveGeetest(gt) {
         } catch (err) {
           pendingGeetest = null;
           showStatus(status, err.message || 'Captcha failed.', 'error');
+          if (j.captcha && j.captcha_image) showSingleCaptcha(j.captcha_image);
         }
       } else {
         showStatus(status, j.message || 'Check failed.', 'error');

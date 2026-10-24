@@ -246,7 +246,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $errMsg = (string) ($r['error'] ?? '');
             $errCode = (string) ($r['code'] ?? '');
-            if (stripos($errMsg, 'captcha') !== false || stripos($errCode, 'captcha') !== false) {
+            $captchaHit = stripos($errMsg, 'captcha') !== false
+                || stripos($errCode, 'captcha') !== false
+                || stripos($errMsg, 'verification code') !== false
+                || stripos($errCode, 'geetest') !== false;
+            if ($captchaHit) {
+                $bulkMode = (string) ($_POST['bulk'] ?? '') !== '' || (string) ($_POST['no_captcha'] ?? '') === '1';
+                if ($bulkMode) {
+                    $capOut = [
+                        'user'    => $user,
+                        'status'  => 'captcha',
+                        'token'   => null,
+                        'details' => null,
+                        'balance' => null,
+                        'error'   => 'Captcha',
+                    ];
+                    $gt = ckGeetestMeta($merchant);
+                    if ($gt['gt'] !== null) {
+                        $capOut['geetest'] = ['gt' => $gt['gt'], 'version' => $gt['version']];
+                    }
+                    echo json_encode($capOut);
+                    exit;
+                }
                 $cap = ckFetchCaptcha();
                 if ($cap['id'] !== null) {
                     $_SESSION['captcha_id'] = $cap['id'];
@@ -1109,28 +1130,47 @@ function loadGeetestSdk() {
 
 function solveGeetest(gt) {
   return new Promise(function (resolve, reject) {
+    let settled = false;
+    const timer = setTimeout(function () {
+      if (!settled) { settled = true; reject(new Error('Captcha widget did not load.')); }
+    }, 20000);
     loadGeetestSdk().then(function () {
       if (typeof window.initGeetest4 !== 'function') {
+        clearTimeout(timer);
         reject(new Error('Captcha widget unavailable.'));
         return;
       }
       window.initGeetest4({ captchaId: gt, product: 'float', language: 'en', hideSuccess: true }, function (captcha) {
         if (!captcha) {
+          clearTimeout(timer);
           reject(new Error('Captcha init failed.'));
           return;
         }
         captcha.onSuccess(function () {
           const v = captcha.getValidate ? captcha.getValidate() : null;
           if (!v) {
+            clearTimeout(timer);
             reject(new Error('Captcha validation missing.'));
             return;
           }
+          settled = true;
+          clearTimeout(timer);
           resolve(v);
         });
-        captcha.onError(function () { reject(new Error('Captcha failed.')); });
-        captcha.showCaptcha();
+        captcha.onError(function () { clearTimeout(timer); reject(new Error('Captcha failed.')); });
+        if (typeof captcha.onClose === 'function') {
+          captcha.onClose(function () { clearTimeout(timer); reject(new Error('Captcha closed.')); });
+        }
+        if (typeof captcha.onReady === 'function') {
+          captcha.onReady(function () { captcha.showCaptcha(); });
+        } else {
+          captcha.showCaptcha();
+        }
       });
-    }).catch(reject);
+    }).catch(function (err) {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -1345,6 +1385,84 @@ function solveGeetest(gt) {
     cell.append(makeButton('Manual', 'btn btn-ghost btn-sm', function () { manualCheck(state); }));
   }
 
+  function paintRow(row, state, j) {
+    row.pill.className = 'pill pending';
+    row.pill.textContent = '';
+    row.sub.hidden = true;
+    row.sub.textContent = '';
+
+    if (j.status === 'valid') {
+      row.pill.className = 'pill ok';
+      row.pill.textContent = 'Valid';
+      row.balance.textContent = formatMoney(j.balance);
+      if (j.token) {
+        row.token.hidden = false;
+        row.token.textContent = 'token ' + j.token;
+      }
+      const profile = j.profile && typeof j.profile === 'object' ? j.profile : {};
+      const bits = [];
+      if (profile['Club tier']) bits.push(profile['Club tier']);
+      if (profile['Labels']) bits.push(profile['Labels']);
+      if (bits.length) {
+        row.sub.hidden = false;
+        row.sub.textContent = bits.join(' · ');
+      }
+      addActions(row.actions, state, row, true);
+      return;
+    }
+
+    if (j.status === 'invalid') {
+      row.pill.className = 'pill err';
+      row.pill.textContent = 'Invalid';
+      row.balance.textContent = '—';
+      addActions(row.actions, state, row, false);
+      return;
+    }
+
+    if (j.status === 'captcha') {
+      row.pill.className = 'pill warn';
+      row.pill.textContent = 'Captcha';
+      row.sub.hidden = false;
+      row.sub.textContent = 'Solve the captcha to finish this check';
+      row.actions.textContent = '';
+      const gt = j.geetest && j.geetest.gt ? j.geetest.gt : '';
+      const solveBtn = makeButton('Solve captcha', 'btn btn-primary btn-sm', async function () {
+        if (!gt) {
+          alert('Captcha widget unavailable. Use Manual.');
+          return;
+        }
+        solveBtn.disabled = true;
+        solveBtn.textContent = 'Solving…';
+        try {
+          const v = await solveGeetest(gt);
+          const j2 = await post({
+            action: 'bulk_check_one',
+            user: state.user,
+            pass: state.pass,
+            geetest: JSON.stringify(v)
+          });
+          paintRow(row, state, j2);
+        } catch (err) {
+          solveBtn.disabled = false;
+          solveBtn.textContent = 'Solve captcha';
+          row.sub.hidden = false;
+          row.sub.textContent = err.message || 'Captcha failed.';
+        }
+      });
+      row.actions.append(solveBtn, makeButton('Manual', 'btn btn-ghost btn-sm', function () { manualCheck(state); }));
+      return;
+    }
+
+    row.pill.className = 'pill err';
+    row.pill.textContent = 'Error';
+    row.balance.textContent = '—';
+    if (j.message) {
+      row.sub.hidden = false;
+      row.sub.textContent = j.message;
+    }
+    addActions(row.actions, state, row, false);
+  }
+
   btn.addEventListener('click', async function () {
     const lines = input.value.split(/\r?\n/).map(parseLine).filter(Boolean);
     if (lines.length === 0) {
@@ -1360,6 +1478,7 @@ function solveGeetest(gt) {
     let valid = 0;
     let invalid = 0;
     let errors = 0;
+    let captchas = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const state = { user: lines[i][0], pass: lines[i][1] };
@@ -1369,78 +1488,28 @@ function solveGeetest(gt) {
 
       let j = null;
       try {
-        j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass });
-        if (j.status === 'captcha') {
-          row.pill.className = 'pill warn';
-          row.pill.textContent = 'Captcha';
-          if (j.geetest && j.geetest.gt) {
-            try {
-              const v = await solveGeetest(j.geetest.gt);
-              j = await post({
-                action: 'bulk_check_one',
-                user: state.user,
-                pass: state.pass,
-                geetest: JSON.stringify(v)
-              });
-            } catch (err) {
-              j = { status: 'error', message: err.message };
-            }
-          } else {
-            const code = await askCaptcha(j.captcha_image);
-            if (code) {
-              j = await post({
-                action: 'bulk_check_one',
-                user: state.user,
-                pass: state.pass,
-                captcha: code,
-                captcha_id: j.captcha_id || ''
-              });
-            }
-          }
-        }
+        j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
       } catch (err) {
         j = { status: 'error', message: err.message };
       }
 
       if (j.status === 'valid') {
         valid++;
-        row.pill.className = 'pill ok';
-        row.pill.textContent = 'Valid';
-        row.balance.textContent = formatMoney(j.balance);
-        if (j.token) {
-          row.token.hidden = false;
-          row.token.textContent = 'token ' + j.token;
-        }
-        const profile = j.profile && typeof j.profile === 'object' ? j.profile : {};
-        const bits = [];
-        if (profile['Club tier']) bits.push(profile['Club tier']);
-        if (profile['Labels']) bits.push(profile['Labels']);
-        if (bits.length) {
-          row.sub.hidden = false;
-          row.sub.textContent = bits.join(' · ');
-        }
-        addActions(row.actions, state, row, true);
       } else if (j.status === 'invalid') {
         invalid++;
-        row.pill.className = 'pill err';
-        row.pill.textContent = 'Invalid';
-        addActions(row.actions, state, row, false);
+      } else if (j.status === 'captcha') {
+        captchas++;
       } else {
         errors++;
-        row.pill.className = 'pill err';
-        row.pill.textContent = 'Error';
-        if (j.message) {
-          row.sub.hidden = false;
-          row.sub.textContent = j.message;
-        }
-        addActions(row.actions, state, row, false);
       }
+      paintRow(row, state, j);
       await new Promise(function (resolve) { setTimeout(resolve, 180); });
     }
 
     btn.disabled = false;
     btn.querySelector('span').textContent = 'Check all';
     let summary = lines.length + ' checked · ' + valid + ' valid · ' + invalid + ' invalid';
+    if (captchas) summary += ' · ' + captchas + ' captcha' + (captchas === 1 ? '' : 's');
     if (errors) summary += ' · ' + errors + ' error' + (errors === 1 ? '' : 's');
     showStatus(status, summary, valid > 0 ? 'ok' : 'info');
   });

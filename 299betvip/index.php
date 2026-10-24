@@ -1331,7 +1331,8 @@ function solveGeetest(gt) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(state.user + ' | ' + state.pass).catch(function () {});
     }
-    window.open(SITE_ORIGIN + '/m/login', '_blank', 'noopener');
+    const status = $('singleStatus');
+    if (status) showStatus(status, 'Loaded ' + state.user + ' into the single check. Solve any captcha there.', 'info');
   }
 
   function copyCredential(state, button) {

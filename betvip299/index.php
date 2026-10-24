@@ -247,6 +247,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errMsg = (string) ($r['error'] ?? '');
             $errCode = (string) ($r['code'] ?? '');
             if (stripos($errMsg, 'captcha') !== false || stripos($errCode, 'captcha') !== false) {
+                $bulkMode = (string) ($_POST['bulk'] ?? '') !== '' || (string) ($_POST['no_captcha'] ?? '') === '1';
+                if ($bulkMode) {
+                    echo json_encode([
+                        'user'    => $user,
+                        'status'  => 'captcha',
+                        'token'   => null,
+                        'details' => null,
+                        'balance' => null,
+                        'error'   => 'Captcha',
+                    ]);
+                    exit;
+                }
                 $cap = ckFetchCaptcha();
                 if ($cap['id'] !== null) {
                     $_SESSION['captcha_id'] = $cap['id'];
@@ -1379,37 +1391,13 @@ function solveGeetest(gt) {
 
       let j = null;
       try {
-        j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass });
-        if (j.status === 'captcha') {
-          row.pill.className = 'pill warn';
-          row.pill.textContent = 'Captcha';
-          if (j.geetest && j.geetest.gt) {
-            try {
-              const v = await solveGeetest(j.geetest.gt);
-              j = await post({
-                action: 'bulk_check_one',
-                user: state.user,
-                pass: state.pass,
-                geetest: JSON.stringify(v)
-              });
-            } catch (err) {
-              j = { status: 'error', message: err.message };
-            }
-          } else {
-            const code = await askCaptcha(j.captcha_image);
-            if (code) {
-              j = await post({
-                action: 'bulk_check_one',
-                user: state.user,
-                pass: state.pass,
-                captcha: code,
-                captcha_id: j.captcha_id || ''
-              });
-            }
-          }
-        }
+        j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
       } catch (err) {
         j = { status: 'error', message: err.message };
+      }
+
+      if (j.status === 'captcha') {
+        j = { status: 'error', message: 'Captcha' };
       }
 
       if (j.status === 'valid') {

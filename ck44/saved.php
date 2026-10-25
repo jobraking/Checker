@@ -696,6 +696,7 @@ details.raw pre{
           <option value="vip-asc">Lowest VIP</option>
           <option value="name">Username A–Z</option>
           <option value="recent">Recently updated</option>
+          <option value="balance-desc">Balance (High-Low)</option>
         </select>
       </div>
       <label class="switch">
@@ -947,6 +948,22 @@ details.raw pre{
     'recent': function (a, b) {
       return (Number(b.getAttribute('data-changed')) - Number(a.getAttribute('data-changed'))) ||
         a.getAttribute('data-user').localeCompare(b.getAttribute('data-user'));
+    },
+    'balance-desc': function (a, b) {
+      var av = a.getAttribute('data-balance');
+      var bv = b.getAttribute('data-balance');
+      var an = av === null || av === '' ? -Infinity : Number(av);
+      var bn = bv === null || bv === '' ? -Infinity : Number(bv);
+      if (an === bn) {
+        return a.getAttribute('data-user').localeCompare(b.getAttribute('data-user'));
+      }
+      if (!isFinite(an)) {
+        return 1;
+      }
+      if (!isFinite(bn)) {
+        return -1;
+      }
+      return (bn - an) || a.getAttribute('data-user').localeCompare(b.getAttribute('data-user'));
     }
   };
 
@@ -1277,6 +1294,19 @@ details.raw pre{
     }
     amount.textContent = text;
     amount.setAttribute('data-state', state);
+    if (state === 'ok') {
+      var numeric = parseFloat(String(text).replace(/[^0-9.-]/g, ''));
+      if (isFinite(numeric)) {
+        card.setAttribute('data-balance', String(numeric));
+      } else {
+        card.removeAttribute('data-balance');
+      }
+    } else {
+      card.removeAttribute('data-balance');
+    }
+    if (sortBy && sortBy.value === 'balance-desc') {
+      applySort();
+    }
     if (title) {
       amount.setAttribute('title', title);
     } else {

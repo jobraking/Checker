@@ -67,16 +67,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '')
     $made = [];
     try {
         $pdo = db();
-        $insert = $pdo->prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
+        $insert = $pdo->prepare('INSERT INTO users (username, password_hash, api_key) VALUES (?, ?, ?)');
         for ($i = 0; $i < 10; $i++) {
             $username = 'd3m09_' . strtolower(bin2hex(random_bytes(4)));
             $password = bin2hex(random_bytes(5));
+            $apiKey = bin2hex(random_bytes(16));
             try {
-                $insert->execute([$username, password_hash($password, PASSWORD_DEFAULT)]);
+                $insert->execute([$username, password_hash($password, PASSWORD_DEFAULT), $apiKey]);
             } catch (PDOException $e) {
                 continue;
             }
-            $made[] = ['username' => $username, 'password' => $password];
+            $made[] = ['username' => $username, 'password' => $password, 'api_key' => $apiKey];
         }
         $createdAccounts = $made;
         $flashText = count($made) . ' account(s) created. Copy the passwords now — they are not shown again.';
@@ -343,6 +344,7 @@ h2{margin:8px 0 10px;font-size:clamp(1.5rem,2.6vw,2.1rem);letter-spacing:-.025em
 .created-card{margin-top:16px}
 .created-card h3{margin:0 0 6px;font-size:1rem}
 .created-list{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.created-export{width:100%;margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;resize:vertical;background:#fbfcfd}
 .solver-actions .danger{color:#b42318;border-color:#f2c7c2}
 .cta{padding:20px 0 70px}
 .cta-box{
@@ -571,12 +573,15 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
       <?php if ($createdAccounts !== []): ?>
         <div class="solver-card created-card">
           <h3>New login accounts</h3>
-          <p class="solver-hint">Passwords are shown once. Copy them before leaving this page.</p>
+          <p class="solver-hint">Format: username|password|key. Shown once, copy before leaving.</p>
+          <textarea class="created-export" readonly rows="<?= min(10, count($createdAccounts)) ?>"><?php foreach ($createdAccounts as $row): ?><?= htmlspecialchars($row['username'] . '|' . $row['password'] . '|' . $row['api_key'], ENT_QUOTES, 'UTF-8') ?>
+<?php endforeach; ?></textarea>
           <div class="created-list">
             <?php foreach ($createdAccounts as $row): ?>
               <div class="solver-item">
                 <b><?= htmlspecialchars($row['username'], ENT_QUOTES, 'UTF-8') ?></b>
                 <code><?= htmlspecialchars($row['password'], ENT_QUOTES, 'UTF-8') ?></code>
+                <code><?= htmlspecialchars($row['api_key'], ENT_QUOTES, 'UTF-8') ?></code>
               </div>
             <?php endforeach; ?>
           </div>

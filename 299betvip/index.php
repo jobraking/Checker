@@ -1506,26 +1506,6 @@ function solveGeetest(gt) {
     addActions(row.actions, state, row, false);
   }
 
-  async function runEntry(state, row) {
-        let j = null;
-        try {
-          j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
-        } catch (err) {
-          j = { status: 'error', message: err.message };
-        }
-
-        if (j.status === 'valid') {
-          valid++;
-        } else if (j.status === 'invalid') {
-          invalid++;
-        } else if (j.status === 'captcha') {
-          captchas++;
-        } else {
-          errors++;
-        }
-        updateProgress(lines.length, valid, invalid + captchas + errors, ++done);
-        paintRow(row, state, j);
-  }
 
   btn.addEventListener('click', async function () {
     const lines = input.value.split(/\r?\n/).map(parseLine).filter(Boolean);
@@ -1543,6 +1523,27 @@ function solveGeetest(gt) {
     let valid = 0;
     let invalid = 0;
     let errors = 0;
+
+    async function runEntry(state, row) {
+          let j = null;
+          try {
+            j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
+          } catch (err) {
+            j = { status: 'error', message: err.message };
+          }
+
+          if (j.status === 'valid') {
+            valid++;
+          } else if (j.status === 'invalid') {
+            invalid++;
+          } else if (j.status === 'captcha') {
+            captchas++;
+          } else {
+            errors++;
+          }
+          updateProgress(lines.length, valid, invalid + captchas + errors, ++done);
+          paintRow(row, state, j);
+    }
     let captchas = 0;
 
     const entries = lines.map(function (line) {

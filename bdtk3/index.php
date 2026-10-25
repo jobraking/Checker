@@ -1361,67 +1361,6 @@ function askCaptcha(src) {
     return run;
   }
 
-  async function runEntry(state, row) {
-        let j = null;
-        try {
-          j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass });
-          if (j.status === 'captcha') {
-            row.pill.className = 'pill warn';
-            row.pill.textContent = 'Captcha';
-            const code = await askCaptchaLocked(j.captcha_image);
-            if (code) {
-              j = await post({
-                action: 'bulk_check_one',
-                user: state.user,
-                pass: state.pass,
-                captcha: code,
-                captcha_id: j.captcha_id || ''
-              });
-            }
-          }
-        } catch (err) {
-          j = { status: 'error', message: err.message };
-        }
-
-        if (j.status === 'valid') {
-          valid++;
-          row.pill.className = 'pill ok';
-          row.pill.textContent = 'Valid';
-          row.balance.textContent = formatMoney(j.balance);
-          if (j.token) {
-            row.token.hidden = false;
-            row.token.textContent = 'token ' + j.token;
-          }
-          const profile = j.profile && typeof j.profile === 'object' ? j.profile : {};
-          const bits = [];
-          if (profile['Club tier']) bits.push(profile['Club tier']);
-          if (profile['Labels']) bits.push(profile['Labels']);
-          if (bits.length) {
-            row.sub.hidden = false;
-            row.sub.textContent = bits.join(' · ');
-          }
-          addActions(row.actions, state, row, true);
-        } else if (j.status === 'invalid') {
-          invalid++;
-          row.pill.className = 'pill err';
-          row.pill.textContent = j.code || 'Invalid';
-          if (j.error) {
-            row.sub.hidden = false;
-            row.sub.textContent = j.error;
-          }
-          addActions(row.actions, state, row, false);
-        } else {
-          errors++;
-          row.pill.className = 'pill err';
-          row.pill.textContent = 'Error';
-          if (j.message) {
-            row.sub.hidden = false;
-            row.sub.textContent = j.message;
-          }
-          addActions(row.actions, state, row, false);
-        }
-        updateProgress(lines.length, valid, invalid + errors, ++done);
-  }
 
   btn.addEventListener('click', async function () {
     const lines = input.value.split(/\r?\n/).map(parseLine).filter(Boolean);
@@ -1439,6 +1378,68 @@ function askCaptcha(src) {
     let valid = 0;
     let invalid = 0;
     let errors = 0;
+
+    async function runEntry(state, row) {
+          let j = null;
+          try {
+            j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass });
+            if (j.status === 'captcha') {
+              row.pill.className = 'pill warn';
+              row.pill.textContent = 'Captcha';
+              const code = await askCaptchaLocked(j.captcha_image);
+              if (code) {
+                j = await post({
+                  action: 'bulk_check_one',
+                  user: state.user,
+                  pass: state.pass,
+                  captcha: code,
+                  captcha_id: j.captcha_id || ''
+                });
+              }
+            }
+          } catch (err) {
+            j = { status: 'error', message: err.message };
+          }
+
+          if (j.status === 'valid') {
+            valid++;
+            row.pill.className = 'pill ok';
+            row.pill.textContent = 'Valid';
+            row.balance.textContent = formatMoney(j.balance);
+            if (j.token) {
+              row.token.hidden = false;
+              row.token.textContent = 'token ' + j.token;
+            }
+            const profile = j.profile && typeof j.profile === 'object' ? j.profile : {};
+            const bits = [];
+            if (profile['Club tier']) bits.push(profile['Club tier']);
+            if (profile['Labels']) bits.push(profile['Labels']);
+            if (bits.length) {
+              row.sub.hidden = false;
+              row.sub.textContent = bits.join(' · ');
+            }
+            addActions(row.actions, state, row, true);
+          } else if (j.status === 'invalid') {
+            invalid++;
+            row.pill.className = 'pill err';
+            row.pill.textContent = j.code || 'Invalid';
+            if (j.error) {
+              row.sub.hidden = false;
+              row.sub.textContent = j.error;
+            }
+            addActions(row.actions, state, row, false);
+          } else {
+            errors++;
+            row.pill.className = 'pill err';
+            row.pill.textContent = 'Error';
+            if (j.message) {
+              row.sub.hidden = false;
+              row.sub.textContent = j.message;
+            }
+            addActions(row.actions, state, row, false);
+          }
+          updateProgress(lines.length, valid, invalid + errors, ++done);
+    }
 
     const entries = lines.map(function (line) {
       const state = { user: line[0], pass: line[1] };

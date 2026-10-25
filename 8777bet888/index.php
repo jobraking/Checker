@@ -1328,6 +1328,37 @@ function askCaptcha(src) {
     cell.append(makeButton('Manual', 'btn btn-ghost btn-sm', function () { manualCheck(state); }));
   }
 
+  let captchaChain = Promise.resolve();
+  function askCaptchaLocked(src) {
+    const run = captchaChain.then(function () { return askCaptcha(src); });
+    captchaChain = run.catch(function () {});
+    return run;
+  }
+
+  async function checkOne(state, row) {
+    let j = null;
+    try {
+      j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass });
+      if (j.status === 'captcha') {
+        row.pill.className = 'pill warn';
+        row.pill.textContent = 'Captcha';
+        const code = await askCaptchaLocked(j.captcha_image);
+        if (code) {
+          j = await post({
+            action: 'bulk_check_one',
+            user: state.user,
+            pass: state.pass,
+            captcha: code,
+            captcha_id: j.captcha_id || ''
+          });
+        }
+      }
+    } catch (err) {
+      j = { status: 'error', message: err.message };
+    }
+    return j;
+  }
+
   btn.addEventListener('click', async function () {
     const lines = input.value.split(/\r?\n/).map(parseLine).filter(Boolean);
     if (lines.length === 0) {
@@ -1344,73 +1375,71 @@ function askCaptcha(src) {
     let valid = 0;
     let invalid = 0;
     let errors = 0;
+    let done = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-      const state = { user: lines[i][0], pass: lines[i][1] };
+    const entries = lines.map(function (line) {
+      const state = { user: line[0], pass: line[1] };
       const row = makeRow(state);
       table.appendChild(row.tr);
-      showStatus(status, 'Checked ' + i + ' of ' + lines.length + '…', 'info');
+      return { state: state, row: row };
+    });
 
-      let j = null;
-      try {
-        j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass });
-        if (j.status === 'captcha') {
-          row.pill.className = 'pill warn';
-          row.pill.textContent = 'Captcha';
-          const code = await askCaptcha(j.captcha_image);
-          if (code) {
-            j = await post({
-              action: 'bulk_check_one',
-              user: state.user,
-              pass: state.pass,
-              captcha: code,
-              captcha_id: j.captcha_id || ''
-            });
+    const CONCURRENCY = 2;
+    for (let i = 0; i < entries.length; i += CONCURRENCY) {
+      const tickStart = Date.now();
+      const batch = entries.slice(i, i + CONCURRENCY);
+      showStatus(status, 'Checked ' + done + ' of ' + lines.length + '…', 'info');
+
+      await Promise.all(batch.map(async function (entry) {
+        const state = entry.state;
+        const row = entry.row;
+        const j = await checkOne(state, row);
+
+        if (j.status === 'valid') {
+          valid++;
+          row.pill.className = 'pill ok';
+          row.pill.textContent = 'Valid';
+          row.balance.textContent = formatMoney(j.balance);
+          if (j.token) {
+            row.token.hidden = false;
+            row.token.textContent = 'token ' + j.token;
           }
+          const profile = j.profile && typeof j.profile === 'object' ? j.profile : {};
+          const bits = [];
+          if (profile['Club tier']) bits.push(profile['Club tier']);
+          if (profile['Labels']) bits.push(profile['Labels']);
+          if (bits.length) {
+            row.sub.hidden = false;
+            row.sub.textContent = bits.join(' · ');
+          }
+          addActions(row.actions, state, row, true);
+        } else if (j.status === 'invalid') {
+          invalid++;
+          row.pill.className = 'pill err';
+          row.pill.textContent = j.code || 'Invalid';
+          if (j.error) {
+            row.sub.hidden = false;
+            row.sub.textContent = j.error;
+          }
+          addActions(row.actions, state, row, false);
+        } else {
+          errors++;
+          row.pill.className = 'pill err';
+          row.pill.textContent = 'Error';
+          if (j.message) {
+            row.sub.hidden = false;
+            row.sub.textContent = j.message;
+          }
+          addActions(row.actions, state, row, false);
         }
-      } catch (err) {
-        j = { status: 'error', message: err.message };
-      }
+        done++;
+        updateProgress(lines.length, valid, invalid + errors, done);
+      }));
 
-      if (j.status === 'valid') {
-        valid++;
-        row.pill.className = 'pill ok';
-        row.pill.textContent = 'Valid';
-        row.balance.textContent = formatMoney(j.balance);
-        if (j.token) {
-          row.token.hidden = false;
-          row.token.textContent = 'token ' + j.token;
-        }
-        const profile = j.profile && typeof j.profile === 'object' ? j.profile : {};
-        const bits = [];
-        if (profile['Club tier']) bits.push(profile['Club tier']);
-        if (profile['Labels']) bits.push(profile['Labels']);
-        if (bits.length) {
-          row.sub.hidden = false;
-          row.sub.textContent = bits.join(' · ');
-        }
-        addActions(row.actions, state, row, true);
-      } else if (j.status === 'invalid') {
-        invalid++;
-        row.pill.className = 'pill err';
-        row.pill.textContent = j.code || 'Invalid';
-        if (j.error) {
-          row.sub.hidden = false;
-          row.sub.textContent = j.error;
-        }
-        addActions(row.actions, state, row, false);
-      } else {
-        errors++;
-        row.pill.className = 'pill err';
-        row.pill.textContent = 'Error';
-        if (j.message) {
-          row.sub.hidden = false;
-          row.sub.textContent = j.message;
-        }
-        addActions(row.actions, state, row, false);
+      if (i + CONCURRENCY < entries.length) {
+        const wait = 1000 - (Date.now() - tickStart);
+        if (wait > 0) await new Promise(function (resolve) { setTimeout(resolve, wait); });
       }
-      updateProgress(lines.length, valid, invalid + errors, i + 1);
-      await new Promise(function (resolve) { setTimeout(resolve, 180); });
     }
 
     btn.disabled = false;

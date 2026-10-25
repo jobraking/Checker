@@ -28,7 +28,7 @@ const fs = require("fs");
 const path = require("path");
 const V = require("./vendor-rsa.js");
 
-const ORIGIN = "https://www.gbajee53.vip";
+const ORIGIN = "https://www.g0lbajee.com";
 const SESSION_FILE = path.join(__dirname, ".ck-session.json");
 
 function parseArgs(argv) {

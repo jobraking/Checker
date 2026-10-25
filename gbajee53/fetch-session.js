@@ -14,14 +14,14 @@
  *   node fetch-session.js --bookmarklet
  */
 
-const SNIPPET = `(()=>{const s=localStorage.getItem("MC_SESSION_INFO");if(!s)return console.warn("No session here - log in at https://www.gbajee53.vip/m/login first.");const j=JSON.parse(s);const out={token:j.token,merchantCode:j.merchantCode,userName:j.userName};navigator.clipboard?.writeText(JSON.stringify(out)).then(()=>console.log("Session copied to clipboard:",JSON.stringify(out)),()=>console.log("Clipboard blocked, copy manually:",JSON.stringify(out)));})()`;
+const SNIPPET = `(()=>{const s=localStorage.getItem("MC_SESSION_INFO");if(!s)return console.warn("No session here - log in at https://www.g0lbajee.com/m/login first.");const j=JSON.parse(s);const out={token:j.token,merchantCode:j.merchantCode,userName:j.userName};navigator.clipboard?.writeText(JSON.stringify(out)).then(()=>console.log("Session copied to clipboard:",JSON.stringify(out)),()=>console.log("Clipboard blocked, copy manually:",JSON.stringify(out)));})()`;
 
 if (process.argv.includes("--bookmarklet")) {
   console.log(`javascript:${encodeURIComponent(SNIPPET)}`);
 } else {
   console.log(
     [
-      "1. Open https://www.gbajee53.vip/m/login and log in as yourself.",
+      "1. Open https://www.g0lbajee.com/m/login and log in as yourself.",
       "2. Stay on the site, open DevTools -> Console.",
       "3. Paste this and press Enter:",
       "",

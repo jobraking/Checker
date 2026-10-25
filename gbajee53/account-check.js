@@ -22,7 +22,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const ORIGIN = "https://www.gbajee53.vip";
+const ORIGIN = "https://www.g0lbajee.com";
 const PROFILE_PATH = "/wps/member/info";
 const AGENT_FUNDS_PATH = "/wps/member/info/funds/consolidated";
 

@@ -16,8 +16,169 @@ require_once __DIR__ . '/vendor-crypto.php';
  * batch mode and no code path that takes a list of credentials.
  */
 
-const CK_ORIGIN = 'https://www.gbajee53.vip';
+const CK_ORIGIN = 'https://www.g0lbajee.com';
+
+/**
+ * Rotation pool. The gbajee front doors move whenever a host is retired or
+ * geo-blocked, so a dead origin must never take the checker down.
+ */
+const CK_ORIGIN_POOL = [
+    'https://www.g0lbajee.com',
+    'https://www.gbajee53.vip',
+    'https://gbajee1.com',
+    'https://gbajee2.com',
+    'https://gbajee3.com',
+    'https://gbajee4.com',
+];
+
 const CK_DEFAULT_MERCHANT = 'bet13bdtf5';
+
+/** Every candidate origin, CK_ORIGINS env first, deduplicated. */
+function ckOriginPool(): array
+{
+    $list = [CK_ORIGIN];
+    $env = getenv('CK_ORIGINS');
+    if (is_string($env) && trim($env) !== '') {
+        foreach (explode(',', $env) as $origin) {
+            $origin = trim($origin);
+            if ($origin !== '') {
+                $list[] = $origin;
+            }
+        }
+    }
+    foreach (CK_ORIGIN_POOL as $origin) {
+        $list[] = $origin;
+    }
+
+    $out = [];
+    foreach ($list as $origin) {
+        $origin = rtrim($origin, '/');
+        if (preg_match('#^https?://#i', $origin) && !in_array($origin, $out, true)) {
+            $out[] = $origin;
+        }
+    }
+    return $out;
+}
+
+function ckOriginKey(): string
+{
+    return 'ck_origin_' . substr(hash('sha256', CK_ORIGIN), 0, 16);
+}
+
+/** The vendor's geo-block answer, in whatever shape it arrives. */
+function ckIsRegionBlock(int $status, string $raw): bool
+{
+    if (preg_match('/region\s+is\s+currently\s+restricted|restricted\s+from\s+accessing|#455-/i', $raw)) {
+        return true;
+    }
+    return $status === 403 || $status === 451;
+}
+
+/** Origins that answered with a region block recently, with expiry. */
+function ckBlockedOrigins(): array
+{
+    $key = ckOriginKey() . '_blocked';
+    $blocked = $_SESSION[$key] ?? [];
+    if (!is_array($blocked)) {
+        return [];
+    }
+    $now = time();
+    $blocked = array_filter($blocked, static fn($at) => ($now - (int) $at) < 600);
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION[$key] = $blocked;
+    }
+    return $blocked;
+}
+
+function ckBlockOrigin(string $origin): void
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return;
+    }
+    $key = ckOriginKey() . '_blocked';
+    $blocked = ckBlockedOrigins();
+    $blocked[$origin] = time();
+    $_SESSION[$key] = $blocked;
+}
+
+function ckActiveOrigin(): string
+{
+    if (!empty($GLOBALS['ck_active_origin']) && is_string($GLOBALS['ck_active_origin'])) {
+        return $GLOBALS['ck_active_origin'];
+    }
+    $key = ckOriginKey();
+    $cached = $_SESSION[$key] ?? null;
+    if (is_array($cached) && isset($cached['origin'], $cached['at']) && (time() - (int) $cached['at']) < 900) {
+        return (string) $cached['origin'];
+    }
+    return CK_ORIGIN;
+}
+
+function ckSetActiveOrigin(string $origin): void
+{
+    $GLOBALS['ck_active_origin'] = $origin;
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION[ckOriginKey()] = ['origin' => $origin, 'at' => time()];
+    }
+}
+
+/** Does this origin serve the vendor API right now? */
+function ckProbeOrigin(string $origin): bool
+{
+    $ch = curl_init($origin . '/wps/session/key/rsa?_=' . (string) (int) (microtime(true) * 1000));
+    if ($ch === false) {
+        return false;
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['User-Agent: ' . ckUserAgent(), 'Cache-Control: no-cache', 'Accept: text/plain'],
+        CURLOPT_TIMEOUT        => 8,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS      => 3,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+    ]);
+    $raw = curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $raw = is_string($raw) ? $raw : '';
+
+    if ($status !== 200 || ckIsRegionBlock($status, $raw)) {
+        return false;
+    }
+    return (bool) preg_match('/^[0-9a-fA-F]{256,}$/', trim($raw));
+}
+
+/** Pick the first origin that answers; cache the winner per node. */
+function ckResolveOrigin(bool $force = false): string
+{
+    static $resolved = null;
+    if (!$force && $resolved !== null && $resolved === ckActiveOrigin() && !isset(ckBlockedOrigins()[$resolved])) {
+        return $resolved;
+    }
+
+    $blocked = ckBlockedOrigins();
+    $current = ckActiveOrigin();
+    if (!isset($blocked[$current]) && ckProbeOrigin($current)) {
+        $resolved = $current;
+        return $resolved;
+    }
+
+    foreach (ckOriginPool() as $origin) {
+        if ($origin === $current || isset($blocked[$origin])) {
+            continue;
+        }
+        if (ckProbeOrigin($origin)) {
+            ckSetActiveOrigin($origin);
+            $resolved = $origin;
+            return $resolved;
+        }
+    }
+
+    ckSetActiveOrigin(CK_ORIGIN);
+    $resolved = CK_ORIGIN;
+    return $resolved;
+}
 
 /**
  * Work out which merchant this deployment uses, instead of asking for it.
@@ -160,11 +321,11 @@ function ckUserAgent(): string
 
 /**
  * @param array{headers?:array<string,string>,body?:string,json?:bool} $opts
- * @return array{status:int,body:array<string,mixed>|null,raw:string,error:?string}
+ * @return array{status:int,body:array<string,string|int|float|bool|array|null>|null,raw:string,error:?string}
  */
-function ckHttp(string $method, string $path, array $opts = []): array
+function ckHttpOnce(string $origin, string $method, string $path, array $opts = []): array
 {
-    $ch = curl_init(CK_ORIGIN . $path);
+    $ch = curl_init($origin . $path);
     if ($ch === false) {
         return ['status' => 0, 'body' => null, 'raw' => '', 'error' => 'curl init failed'];
     }
@@ -204,6 +365,45 @@ function ckHttp(string $method, string $path, array $opts = []): array
     return ['status' => $status, 'body' => $body, 'raw' => $raw, 'error' => $error];
 }
 
+/**
+ * Perform a request, rotating to the next live origin when the current one
+ * answers with the geo-block page or refuses the connection.
+ *
+ * @param array{headers?:array<string,string>,body?:string,json?:bool} $opts
+ * @return array{status:int,body:array<string,mixed>|null,raw:string,error:?string}
+ */
+function ckHttp(string $method, string $path, array $opts = []): array
+{
+    $origin = ckResolveOrigin();
+    $order = [$origin];
+    foreach (ckOriginPool() as $candidate) {
+        if ($candidate !== $origin) {
+            $order[] = $candidate;
+        }
+    }
+
+    $first = null;
+    foreach ($order as $candidate) {
+        $res = ckHttpOnce($candidate, $method, $path, $opts);
+        $first ??= $res;
+
+        $blocked = ckIsRegionBlock($res['status'], $res['raw']);
+        $unreachable = $res['status'] === 0 && $res['error'] !== null;
+        if ($blocked) {
+            ckBlockOrigin($candidate);
+        }
+        if ($blocked || $unreachable) {
+            continue;
+        }
+        if ($candidate !== $origin) {
+            ckSetActiveOrigin($candidate);
+        }
+        return $res;
+    }
+
+    return $first ?? ['status' => 0, 'body' => null, 'raw' => '', 'error' => 'no origin available'];
+}
+
 function ckRealUaHeader(): string
 {
     $ua = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -234,10 +434,13 @@ function ckFetchRsaModulus(): string
  */
 function ckLogin(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, ?string $captcha = null, ?string $captchaId = null): array
 {
+    static $retry = 0;
+
     if ($username === '' || $password === '') {
         return ['ok' => false, 'error' => 'Username and password are both required.', 'code' => null, 'session' => null];
     }
 
+    $originAtStart = ckResolveOrigin();
     try {
         $modulus = ckFetchRsaModulus();
     } catch (RuntimeException $e) {
@@ -271,7 +474,7 @@ function ckLogin(string $username, string $password, string $merchant = CK_DEFAU
         'Merchant'        => $merchant,
         'Language'        => 'EN',
         'X-Real-UA'       => ckRealUaHeader(),
-        'Referer'         => CK_ORIGIN . '/m/login',
+        'Referer'         => ckActiveOrigin() . '/m/login',
     ];
     if ($captchaId !== null && $captchaId !== '') {
         $loginHeaders['Cookie'] = 'captchaId=' . $captchaId;
@@ -281,6 +484,19 @@ function ckLogin(string $username, string $password, string $merchant = CK_DEFAU
         'headers' => $loginHeaders,
         'body'     => json_encode(['value' => $des], JSON_UNESCAPED_SLASHES),
     ]);
+
+    // If the origin rotated between the RSA fetch and the login post, the
+    // modulus belongs to a different host. Re-run the whole handshake once.
+    if ($retry < 1 && (ckActiveOrigin() !== $originAtStart || ckIsRegionBlock($res['status'], $res['raw']))) {
+        $retry++;
+        ckBlockOrigin($originAtStart);
+        ckResolveOrigin(true);
+        try {
+            return ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
+        } finally {
+            $retry = 0;
+        }
+    }
 
     if ($res['error'] !== null) {
         return ['ok' => false, 'error' => 'login request failed: ' . $res['error'], 'code' => null, 'session' => null];
@@ -455,7 +671,8 @@ function ckAuthHeaders(array $session): array
  */
 function ckFetchCaptcha(): array
 {
-    $ch = curl_init(CK_ORIGIN . '/wps/captcha');
+    ckResolveOrigin();
+    $ch = curl_init(ckActiveOrigin() . '/wps/captcha');
     if ($ch === false) {
         return ['id' => null, 'image' => null, 'error' => 'curl init failed'];
     }

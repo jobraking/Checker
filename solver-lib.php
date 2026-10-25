@@ -27,10 +27,13 @@ function solver_config(): array
                 continue;
             }
             $cfg['accounts'][] = [
-                'label'    => (string) ($row['label'] ?? ''),
-                'key'      => (string) ($row['key'] ?? ''),
-                'username' => (string) ($row['username'] ?? ''),
-                'password' => (string) ($row['password'] ?? ''),
+                'label'      => (string) ($row['label'] ?? ''),
+                'key'        => (string) ($row['key'] ?? ''),
+                'username'   => (string) ($row['username'] ?? ''),
+                'password'   => (string) ($row['password'] ?? ''),
+                'status'     => (string) ($row['status'] ?? 'ok'),
+                'last_error' => (string) ($row['last_error'] ?? ''),
+                'used_at'    => (string) ($row['used_at'] ?? ''),
             ];
         }
     }
@@ -45,10 +48,13 @@ function solver_save(array $cfg): bool
             continue;
         }
         $accounts[] = [
-            'label'    => trim((string) ($row['label'] ?? '')),
-            'key'      => trim((string) ($row['key'] ?? '')),
-            'username' => trim((string) ($row['username'] ?? '')),
-            'password' => (string) ($row['password'] ?? ''),
+            'label'      => trim((string) ($row['label'] ?? '')),
+            'key'        => trim((string) ($row['key'] ?? '')),
+            'username'   => trim((string) ($row['username'] ?? '')),
+            'password'   => (string) ($row['password'] ?? ''),
+            'status'     => trim((string) ($row['status'] ?? 'ok')),
+            'last_error' => trim((string) ($row['last_error'] ?? '')),
+            'used_at'    => (string) ($row['used_at'] ?? ''),
         ];
     }
     $payload = [
@@ -69,11 +75,81 @@ function solver_keys(?array $cfg = null): array
     $cfg = $cfg ?? solver_config();
     $keys = [];
     foreach ($cfg['accounts'] as $row) {
-        if (($row['key'] ?? '') !== '') {
+        if (($row['key'] ?? '') !== '' && ($row['status'] ?? 'ok') !== 'dead') {
             $keys[] = $row['key'];
         }
     }
     return array_values(array_unique($keys));
+}
+
+
+function solver_fatal_key_error(string $code): bool
+{
+    $code = strtoupper(trim($code));
+    if ($code === '') {
+        return false;
+    }
+    foreach ([
+        'ERROR_KEY_DOES_NOT_EXIST',
+        'ERROR_WRONG_USER_KEY',
+        'ERROR_ZERO_BALANCE',
+        'ERROR_BANNED',
+        'ERROR_IP_NOT_ALLOWED',
+        'ERROR_ACCESS_DENIED',
+        'ERROR_ACCOUNT_SUSPENDED',
+    ] as $fatal) {
+        if (strpos($code, $fatal) !== false) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function solver_mark_key(string $key, string $status, string $error = ''): void
+{
+    $cfg = solver_config();
+    $changed = false;
+    foreach ($cfg['accounts'] as $i => $row) {
+        if (($row['key'] ?? '') === $key) {
+            $cfg['accounts'][$i]['status'] = $status;
+            $cfg['accounts'][$i]['last_error'] = $error;
+            $cfg['accounts'][$i]['used_at'] = gmdate('c');
+            $changed = true;
+        }
+    }
+    if ($changed) {
+        solver_save($cfg);
+    }
+}
+
+function solver_ensure_slot(): string
+{
+    $cfg = solver_config();
+    $live = false;
+    $pending = false;
+    foreach ($cfg['accounts'] as $row) {
+        if (($row['key'] ?? '') !== '' && ($row['status'] ?? 'ok') !== 'dead') {
+            $live = true;
+        }
+        if (($row['key'] ?? '') === '') {
+            $pending = true;
+        }
+    }
+    if ($live || $pending) {
+        return '';
+    }
+    $label = 'auto-' . gmdate('md-His');
+    $cfg['accounts'][] = [
+        'label'      => $label,
+        'key'        => '',
+        'username'   => '',
+        'password'   => '',
+        'status'     => 'pending',
+        'last_error' => 'created after solver failure; paste a key',
+        'used_at'    => gmdate('c'),
+    ];
+    solver_save($cfg);
+    return $label;
 }
 
 function solver_http(string $url, array $payload, int $timeout = 30): array
@@ -135,6 +211,10 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
         $body = $created['body'] ?? [];
         if (($body['errorId'] ?? 1) !== 0 || empty($body['taskId'])) {
             $error = (string) ($body['errorCode'] ?? 'create failed');
+            if (solver_fatal_key_error($error)) {
+                solver_mark_key($key, 'dead', $error);
+                solver_ensure_slot();
+            }
             continue;
         }
         $taskId = (string) $body['taskId'];
@@ -152,6 +232,10 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
             $pb = $poll['body'] ?? [];
             if (($pb['errorId'] ?? 0) !== 0) {
                 $error = (string) ($pb['errorCode'] ?? 'solve failed');
+                if (solver_fatal_key_error($error)) {
+                    solver_mark_key($key, 'dead', $error);
+                    solver_ensure_slot();
+                }
                 break;
             }
             if (($pb['status'] ?? '') === 'ready' && isset($pb['solution']) && is_array($pb['solution'])) {
@@ -167,6 +251,7 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
                     break;
                 }
                 $usedKey = $key;
+                solver_mark_key($key, 'ok', '');
                 return $solution;
             }
         }
@@ -175,6 +260,7 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
         }
     }
 
+    solver_ensure_slot();
     return null;
 }
 

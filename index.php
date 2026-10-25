@@ -16,10 +16,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $cfg['enabled'] = !empty($_POST['enabled']);
             $remove = $_POST['remove'] ?? [];
             $remove = is_array($remove) ? array_map('strval', $remove) : [];
+            $updates = $_POST['keys'] ?? [];
+            $updates = is_array($updates) ? $updates : [];
             $accounts = [];
             foreach ($cfg['accounts'] as $i => $row) {
                 if (in_array((string) $i, $remove, true)) {
                     continue;
+                }
+                $newKey = trim((string) ($updates[$i] ?? ''));
+                if ($newKey !== '') {
+                    $row['key'] = $newKey;
+                    $row['status'] = 'ok';
+                    $row['last_error'] = '';
                 }
                 $accounts[] = $row;
             }
@@ -28,7 +36,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $un = trim((string) ($_POST['new_username'] ?? ''));
             $pw = (string) ($_POST['new_password'] ?? '');
             if ($key !== '' || $un !== '' || $pw !== '') {
-                $accounts[] = ['label' => $label, 'key' => $key, 'username' => $un, 'password' => $pw];
+                $accounts[] = [
+                    'label'    => $label,
+                    'key'      => $key,
+                    'username' => $un,
+                    'password' => $pw,
+                    'status'   => $key !== '' ? 'ok' : 'pending',
+                ];
             }
             $cfg['accounts'] = $accounts;
             $solverFlash = solver_save($cfg)
@@ -45,6 +59,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 }
 $solverCfg = solver_config();
 $solverCsrf = csrf_token();
+$solverLiveKeys = solver_keys($solverCfg);
+$solverNeedsKey = $solverCfg['enabled'] && $solverLiveKeys === [];
 $createdAccounts = [];
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '') === 'create_accounts' && csrf_check($_POST['csrf'] ?? null)) {
@@ -318,6 +334,12 @@ h2{margin:8px 0 10px;font-size:clamp(1.5rem,2.6vw,2.1rem);letter-spacing:-.025em
 }
 .solver-grid input:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(8,119,237,.1)}
 .solver-actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.solver-badge{padding:3px 8px;border-radius:999px;font-size:.68rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.solver-badge.ok{background:var(--mint-soft);color:#087a5b}
+.solver-badge.pending{background:#fff8e6;color:#8a5a00}
+.solver-badge.dead{background:#fff0ef;color:#b42318}
+.solver-key-input{flex:1 1 150px;min-width:130px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-size:.8rem}
+.solver-err{color:#b42318}
 .created-card{margin-top:16px}
 .created-card h3{margin:0 0 6px;font-size:1rem}
 .created-list{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -495,14 +517,24 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
         </label>
         <p class="solver-hint">Provider: 2Captcha. Add one or more API keys. Username/password are stored for reference and do not replace the API key.</p>
 
+        <?php if ($solverNeedsKey): ?>
+          <div class="solver-flash error">Auto-solve is on but no usable key is live. Paste a key into a slot below and save.</div>
+        <?php endif; ?>
+
         <?php if ($solverCfg['accounts'] !== []): ?>
           <div class="solver-list">
             <?php foreach ($solverCfg['accounts'] as $i => $row): ?>
+              <?php $status = ($row['key'] === '' || ($row['status'] ?? '') === 'pending') ? 'pending' : (($row['status'] ?? '') === 'dead' ? 'dead' : 'ok'); ?>
               <div class="solver-item">
                 <b><?= htmlspecialchars($row['label'] !== '' ? $row['label'] : 'Account ' . ($i + 1), ENT_QUOTES, 'UTF-8') ?></b>
+                <span class="solver-badge <?= $status ?>"><?= $status ?></span>
                 <code><?= htmlspecialchars(solver_mask($row['key']) !== '' ? solver_mask($row['key']) : '(no api key)', ENT_QUOTES, 'UTF-8') ?></code>
                 <?php if ($row['username'] !== ''): ?>
                   <code><?= htmlspecialchars($row['username'], ENT_QUOTES, 'UTF-8') ?></code>
+                <?php endif; ?>
+                <input class="solver-key-input" name="keys[<?= (int) $i ?>]" placeholder="paste new key" autocomplete="off">
+                <?php if (($row['last_error'] ?? '') !== ''): ?>
+                  <code class="solver-err"><?= htmlspecialchars($row['last_error'], ENT_QUOTES, 'UTF-8') ?></code>
                 <?php endif; ?>
                 <label class="rm"><input type="checkbox" name="remove[]" value="<?= (int) $i ?>"> remove</label>
               </div>

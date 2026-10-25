@@ -232,7 +232,7 @@ function ckFetchRsaModulus(): string
  *
  * @return array{ok:bool,error:?string,code:?string,session:?array<string,mixed>}
  */
-function ckLogin(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, ?string $captcha = null, ?string $captchaId = null): array
+function ckLogin(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, ?string $captcha = null, ?string $captchaId = null, ?array $geetest = null): array
 {
     if ($username === '' || $password === '') {
         return ['ok' => false, 'error' => 'Username and password are both required.', 'code' => null, 'session' => null];
@@ -257,6 +257,16 @@ function ckLogin(string $username, string $password, string $merchant = CK_DEFAU
         'isOfficialAppLogin' => true,
         'device'             => '',
     ], JSON_UNESCAPED_SLASHES);
+
+    if (is_array($geetest)) {
+        $v4 = json_encode([
+            'lot_number'     => (string) ($geetest['lot_number'] ?? ''),
+            'captcha_output' => (string) ($geetest['captcha_output'] ?? ''),
+            'pass_token'     => (string) ($geetest['pass_token'] ?? ''),
+            'gen_time'       => (string) ($geetest['gen_time'] ?? ''),
+        ], JSON_UNESCAPED_SLASHES);
+        $payload = substr((string) $payload, 0, -1) . ',"geetestValidateV4":' . $v4 . '}';
+    }
 
     $des = desEncryptBase64((string) $payload, $secret);
 
@@ -366,12 +376,12 @@ function ckIsDuplicateSubmission(?string $msg): bool
         || stripos($m, 'do not submit') !== false;
 }
 
-function ckLoginRetry(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, int $tries = 3, ?string $captcha = null, ?string $captchaId = null): array
+function ckLoginRetry(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, int $tries = 3, ?string $captcha = null, ?string $captchaId = null, ?array $geetest = null): array
 {
-    $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
+    $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId, $geetest);
     for ($i = 1; $i < $tries && !$r['ok'] && ckIsDuplicateSubmission($r['error']); $i++) {
         sleep(2);
-        $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
+        $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId, $geetest);
     }
     return $r;
 }
@@ -484,6 +494,32 @@ function ckFetchCaptcha(): array
     $img = is_array($body) ? ($body['value'] ?? null) : null;
     $dataUri = is_string($img) && $img !== '' ? 'data:image/png;base64,' . $img : null;
     return ['id' => $id, 'image' => $dataUri, 'error' => $err];
+}
+
+/**
+ * Geetest v4 bootstrap data for this deployment.
+ *
+ * @return array{gt:?string,version:?string,error:?string}
+ */
+function ckGeetestMeta(string $merchant = CK_DEFAULT_MERCHANT): array
+{
+    $res = ckHttp('GET', '/wps/captcha/geetest?t=' . (string) (int) (microtime(true) * 1000), [
+        'headers' => [
+            'Accept'   => 'application/json, text/plain, */*',
+            'Merchant' => $merchant,
+            'Language' => 'EN',
+            'Referer'  => CK_ORIGIN . '/m/login',
+        ],
+    ]);
+    $v = is_array($res['body']) ? ($res['body']['value'] ?? null) : null;
+    if (!is_array($v) || empty($v['gt'])) {
+        return ['gt' => null, 'version' => null, 'error' => $res['error'] ?? ('HTTP ' . $res['status'])];
+    }
+    return [
+        'gt'      => (string) $v['gt'],
+        'version' => isset($v['version']) && is_scalar($v['version']) ? (string) $v['version'] : 'v4',
+        'error'   => null,
+    ];
 }
 
 function ckUuidV4(): string

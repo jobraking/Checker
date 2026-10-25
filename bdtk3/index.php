@@ -5,6 +5,7 @@ require_once dirname(__DIR__) . '/guard.php';
 
 require_once __DIR__ . '/ck-client.php';
 require_once dirname(__DIR__) . '/captcha-ocr.php';
+require_once dirname(__DIR__) . '/solver-lib.php';
 
 /**
  * Local web interface for account checking.
@@ -83,12 +84,30 @@ function ckCaptchaHit(array $r): bool
 {
     $m = (string) ($r['error'] ?? '');
     $c = (string) ($r['code'] ?? '');
-    return stripos($m, 'captcha') !== false || stripos($c, 'captcha') !== false;
+    return stripos($m, 'captcha') !== false
+        || stripos($c, 'captcha') !== false
+        || stripos($m, 'verification code') !== false
+        || stripos($c, 'geetest') !== false;
 }
 
 function ckAutoCaptchaLogin(string $user, string $pass, string $merchant): ?array
 {
-    for ($i = 0; $i < 3; $i++) {
+    @set_time_limit(0);
+
+    for ($i = 0; $i < 2; $i++) {
+        $gt = ckGeetestMeta($merchant);
+        if ($gt['gt'] !== null) {
+            $solverError = null;
+            $solution = solver_solve_geetest_v4((string) $gt['gt'], CK_ORIGIN . '/m/login', $solverKey, $solverError);
+            if ($solution !== null) {
+                $r = ckLoginRetry($user, $pass, $merchant, null, 1, null, null, $solution);
+                if ($r['ok'] || !ckCaptchaHit($r)) {
+                    return $r;
+                }
+                continue;
+            }
+        }
+
         $cap = ckFetchCaptcha();
         if (($cap['image'] ?? null) === null) {
             continue;
@@ -335,6 +354,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $captchaId = (string) ($_SESSION['captcha_id'] ?? '');
 
         $result = ckLoginRetry($user, $pass, $merchant, null, 3, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null);
+
+        if (!$result['ok'] && ckCaptchaHit($result)) {
+            $auto = ckAutoCaptchaLogin($user, $pass, $merchant);
+            if ($auto !== null) {
+                $result = $auto;
+            }
+        }
 
         if ($result['ok'] && $result['session'] !== null) {
             // Store only the session token -- never the password.

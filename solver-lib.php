@@ -219,9 +219,6 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
     $usedKey = null;
     $error = 'solver disabled';
     $cfg = solver_config();
-    if (!$cfg['enabled']) {
-        return null;
-    }
 
     $localError = null;
     $local = gtl_solve($captchaId, $pageUrl, $localError);
@@ -229,6 +226,11 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
         $usedKey = 'local';
         $error = null;
         return $local;
+    }
+
+    if (!$cfg['enabled']) {
+        $error = 'local solver failed: ' . ($localError !== null && $localError !== '' ? $localError : 'unknown error');
+        return null;
     }
 
     $keys = solver_keys($cfg);

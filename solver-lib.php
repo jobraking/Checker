@@ -26,6 +26,9 @@ function solver_config(): array
             if (!is_array($row)) {
                 continue;
             }
+            if (($row['status'] ?? 'ok') === 'dead') {
+                continue;
+            }
             $cfg['accounts'][] = [
                 'label'      => (string) ($row['label'] ?? ''),
                 'key'        => (string) ($row['key'] ?? ''),
@@ -118,6 +121,25 @@ function solver_mark_key(string $key, string $status, string $error = ''): void
         }
     }
     if ($changed) {
+        solver_save($cfg);
+    }
+}
+
+function solver_remove_key(string $key): void
+{
+    if ($key === '') {
+        return;
+    }
+    $cfg = solver_config();
+    $kept = [];
+    foreach ($cfg['accounts'] as $row) {
+        if (($row['key'] ?? '') === $key) {
+            continue;
+        }
+        $kept[] = $row;
+    }
+    if (count($kept) !== count($cfg['accounts'])) {
+        $cfg['accounts'] = $kept;
         solver_save($cfg);
     }
 }
@@ -217,7 +239,7 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
         if (($body['errorId'] ?? 1) !== 0 || empty($body['taskId'])) {
             $error = (string) ($body['errorCode'] ?? 'create failed');
             if (solver_fatal_key_error($error)) {
-                solver_mark_key($key, 'dead', $error);
+                solver_remove_key($key);
                 solver_ensure_slot();
             }
             continue;
@@ -238,7 +260,7 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
             if (($pb['errorId'] ?? 0) !== 0) {
                 $error = (string) ($pb['errorCode'] ?? 'solve failed');
                 if (solver_fatal_key_error($error)) {
-                    solver_mark_key($key, 'dead', $error);
+                    solver_remove_key($key);
                     solver_ensure_slot();
                 }
                 break;

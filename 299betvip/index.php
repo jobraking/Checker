@@ -210,6 +210,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 || stripos($c1, 'geetest') !== false;
             if ($capAgain) {
                 set_time_limit(0);
+                $solverError = null;
                 for ($attempt = 0; $attempt < 2 && !$r['ok']; $attempt++) {
                     $gt = ckGeetestMeta($merchant);
                     if ($gt['gt'] === null) {
@@ -289,6 +290,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'balance' => null,
                         'error'   => 'Captcha',
                     ];
+                    if (($solverError ?? '') !== '') {
+                        $capOut['solver_error'] = (string) $solverError;
+                    }
                     $gt = ckGeetestMeta($merchant);
                     if ($gt['gt'] !== null) {
                         $capOut['geetest'] = ['gt' => $gt['gt'], 'version' => $gt['version']];
@@ -1452,7 +1456,7 @@ function solveGeetest(gt) {
       row.pill.className = 'pill warn';
       row.pill.textContent = 'Captcha';
       row.sub.hidden = false;
-      row.sub.textContent = 'Auto solver failed or is not configured';
+      row.sub.textContent = j.solver_error ? ('Solver: ' + j.solver_error) : 'Auto solver failed or is not configured';
       addActions(row.actions, state, row, false);
       return;
     }

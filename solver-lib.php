@@ -8,9 +8,10 @@ const SOLVER_ENDPOINT_RESULT = 'https://api.2captcha.com/getTaskResult';
 function solver_config(): array
 {
     $cfg = [
-        'enabled'  => false,
-        'provider' => '2captcha',
-        'accounts' => [],
+        'enabled'    => false,
+        'provider'   => '2captcha',
+        'accounts'   => [],
+        'last_error' => '',
     ];
     if (!is_readable(SOLVER_FILE)) {
         return $cfg;
@@ -21,6 +22,7 @@ function solver_config(): array
     }
     $cfg['enabled'] = !empty($data['enabled']);
     $cfg['provider'] = isset($data['provider']) && is_string($data['provider']) ? $data['provider'] : '2captcha';
+    $cfg['last_error'] = (string) ($data['last_error'] ?? '');
     if (isset($data['accounts']) && is_array($data['accounts'])) {
         foreach ($data['accounts'] as $row) {
             if (!is_array($row)) {
@@ -61,9 +63,10 @@ function solver_save(array $cfg): bool
         ];
     }
     $payload = [
-        'enabled'  => !empty($cfg['enabled']),
-        'provider' => (string) ($cfg['provider'] ?? '2captcha'),
-        'accounts' => $accounts,
+        'enabled'    => !empty($cfg['enabled']),
+        'provider'   => (string) ($cfg['provider'] ?? '2captcha'),
+        'accounts'   => $accounts,
+        'last_error' => (string) ($cfg['last_error'] ?? ''),
     ];
     $ok = file_put_contents(
         SOLVER_FILE,
@@ -111,6 +114,9 @@ function solver_fatal_key_error(string $code): bool
 function solver_mark_key(string $key, string $status, string $error = ''): void
 {
     $cfg = solver_config();
+    if ($status === 'ok') {
+        $cfg['last_error'] = '';
+    }
     $changed = false;
     foreach ($cfg['accounts'] as $i => $row) {
         if (($row['key'] ?? '') === $key) {
@@ -125,7 +131,7 @@ function solver_mark_key(string $key, string $status, string $error = ''): void
     }
 }
 
-function solver_remove_key(string $key): void
+function solver_remove_key(string $key, string $error = ''): void
 {
     if ($key === '') {
         return;
@@ -140,6 +146,7 @@ function solver_remove_key(string $key): void
     }
     if (count($kept) !== count($cfg['accounts'])) {
         $cfg['accounts'] = $kept;
+        $cfg['last_error'] = 'Key ' . solver_mask($key) . ' removed: ' . ($error !== '' ? $error : 'rejected');
         solver_save($cfg);
     }
 }
@@ -239,7 +246,7 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
         if (($body['errorId'] ?? 1) !== 0 || empty($body['taskId'])) {
             $error = (string) ($body['errorCode'] ?? 'create failed');
             if (solver_fatal_key_error($error)) {
-                solver_remove_key($key);
+                solver_remove_key($key, $error);
                 solver_ensure_slot();
             }
             continue;
@@ -260,7 +267,7 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
             if (($pb['errorId'] ?? 0) !== 0) {
                 $error = (string) ($pb['errorCode'] ?? 'solve failed');
                 if (solver_fatal_key_error($error)) {
-                    solver_remove_key($key);
+                    solver_remove_key($key, $error);
                     solver_ensure_slot();
                 }
                 break;

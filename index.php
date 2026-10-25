@@ -549,6 +549,9 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
         <?php if ($solverNeedsKey): ?>
           <div class="solver-flash error">Auto-solve is on but no usable key is live. Paste a key into a slot below and save.</div>
         <?php endif; ?>
+        <?php if (($solverCfg['last_error'] ?? '') !== ''): ?>
+          <div class="solver-flash error"><?= htmlspecialchars($solverCfg['last_error'], ENT_QUOTES, 'UTF-8') ?></div>
+        <?php endif; ?>
 
         <?php if ($solverCfg['accounts'] !== []): ?>
           <div class="solver-list">

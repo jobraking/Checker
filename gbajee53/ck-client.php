@@ -700,11 +700,22 @@ function ckIsDuplicateSubmission(?string $msg): bool
         || stripos($m, 'do not submit') !== false;
 }
 
+function ckIsThrottled(?string $msg, ?string $code = null): bool
+{
+    $m = strtolower((string) $msg . ' ' . (string) $code);
+    foreach (['too_many_request', 'too_many', 'too many', 'rate limit', 'rate_limit', 'do not submit', 'request twice', 'twice', '#394', '429'] as $needle) {
+        if (strpos($m, $needle) !== false) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function ckLoginRetry(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, int $tries = 3, ?string $captcha = null, ?string $captchaId = null): array
 {
     $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
-    for ($i = 1; $i < $tries && !$r['ok'] && ckIsDuplicateSubmission($r['error']); $i++) {
-        sleep(2);
+    for ($i = 1; $i < $tries && !$r['ok'] && (ckIsDuplicateSubmission($r['error']) || ckIsThrottled($r['error'], $r['code'] ?? null)); $i++) {
+        usleep(random_int(1200, 2400) * 1000);
         $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
     }
     return $r;

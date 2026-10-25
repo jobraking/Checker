@@ -124,7 +124,8 @@ function savedLoginWithCaptcha(string $username, string $password, string $merch
         }
         $usedKey = null;
         $solverError = null;
-        $solution = solver_solve_geetest_v4((string) $meta['gt'], CK_ORIGIN . '/m/login', $usedKey, $solverError);
+        $loginPage = function_exists('ckActiveOrigin') ? ckActiveOrigin() : CK_ORIGIN;
+        $solution = solver_solve_geetest_v4((string) $meta['gt'], $loginPage . '/m/login', $usedKey, $solverError);
         if (!is_array($solution)) {
             $result['solver_error'] = $solverError !== null && $solverError !== '' ? $solverError : 'captcha solve failed';
             break;

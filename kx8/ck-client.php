@@ -4,7 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/vendor-crypto.php';
 
 /**
- * Shared client for the kx8 account checker.
+ * Shared client for the ck44 account checker.
  *
  * Mirrors the browser's request pipeline:
  *   GET  /wps/session/key/rsa          -> RSA public modulus
@@ -232,7 +232,7 @@ function ckFetchRsaModulus(): string
  *
  * @return array{ok:bool,error:?string,code:?string,session:?array<string,mixed>}
  */
-function ckLogin(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, ?string $captcha = null, ?string $captchaId = null): array
+function ckLogin(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, ?string $captcha = null, ?string $captchaId = null, ?array $geetest = null): array
 {
     if ($username === '' || $password === '') {
         return ['ok' => false, 'error' => 'Username and password are both required.', 'code' => null, 'session' => null];
@@ -248,7 +248,7 @@ function ckLogin(string $username, string $password, string $merchant = CK_DEFAU
     $reversed = strrev($secret);
     $rsa = vendorRsaEncrypt($reversed, $modulus);
 
-    $payload = json_encode([
+    $payload = [
         'username'           => $username,
         'password'           => $password,
         'captcha'            => $captcha ?? '',
@@ -256,7 +256,23 @@ function ckLogin(string $username, string $password, string $merchant = CK_DEFAU
         'loginDeviceId'      => $deviceId !== null && $deviceId !== '' ? $deviceId : ckUuidV4(),
         'isOfficialAppLogin' => true,
         'device'             => '',
-    ], JSON_UNESCAPED_SLASHES);
+    ];
+
+    // Geetest v4 token solved in the browser (lot_number/captcha_output/
+    // pass_token/gen_time). The vendor validates it server-side.
+    if (is_array($geetest)) {
+        $v4 = [
+            'lot_number'     => (string) ($geetest['lot_number'] ?? ''),
+            'captcha_output' => (string) ($geetest['captcha_output'] ?? ''),
+            'pass_token'     => (string) ($geetest['pass_token'] ?? ''),
+            'gen_time'       => (string) ($geetest['gen_time'] ?? ''),
+        ];
+        if ($v4['lot_number'] !== '' && $v4['pass_token'] !== '') {
+            $payload['geetestValidateV4'] = $v4;
+        }
+    }
+
+    $payload = json_encode($payload, JSON_UNESCAPED_SLASHES);
 
     $des = desEncryptBase64((string) $payload, $secret);
 
@@ -377,12 +393,12 @@ function ckIsThrottled(?string $msg, ?string $code = null): bool
     return false;
 }
 
-function ckLoginRetry(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, int $tries = 3, ?string $captcha = null, ?string $captchaId = null): array
+function ckLoginRetry(string $username, string $password, string $merchant = CK_DEFAULT_MERCHANT, ?string $deviceId = null, int $tries = 3, ?string $captcha = null, ?string $captchaId = null, ?array $geetest = null): array
 {
-    $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
+    $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId, $geetest);
     for ($i = 1; $i < $tries && !$r['ok'] && (ckIsDuplicateSubmission($r['error']) || ckIsThrottled($r['error'], $r['code'] ?? null)); $i++) {
         usleep(random_int(1200, 2400) * 1000);
-        $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId);
+        $r = ckLogin($username, $password, $merchant, $deviceId, $captcha, $captchaId, $geetest);
     }
     return $r;
 }
@@ -446,18 +462,6 @@ function ckAgentFunds(array $session): array
     return ckHttp('GET', '/wps/member/info/funds/consolidated', ['headers' => ckAuthHeaders($session)]);
 }
 
-/** Wallet balance endpoint (v2). */
-function ckBalance(array $session): array
-{
-    return ckHttp('GET', '/wps/v2/wallets/balance', ['headers' => ckAuthHeaders($session)]);
-}
-
-/** Referral income overview (valid referral counts). */
-function ckReferralOverview(array $session): array
-{
-    return ckHttp('GET', '/wps/relay/ODSFE2_referralMyIncomeOverview', ['headers' => ckAuthHeaders($session)]);
-}
-
 function ckAuthHeaders(array $session): array
 {
     $h = [
@@ -507,6 +511,36 @@ function ckFetchCaptcha(): array
     $img = is_array($body) ? ($body['value'] ?? null) : null;
     $dataUri = is_string($img) && $img !== '' ? 'data:image/png;base64,' . $img : null;
     return ['id' => $id, 'image' => $dataUri, 'error' => $err];
+}
+
+/**
+ * Geetest v4 bootstrap data.
+ *
+ * The vendor switched /wps/session/login to require a Geetest v4 token.
+ * The puzzle has to be solved in a real browser (the SDK needs JS), so the
+ * backend only hands out the captcha id and lets the page render the widget.
+ *
+ * @return array{gt:?string,version:?string,error:?string}
+ */
+function ckGeetestMeta(string $merchant = CK_DEFAULT_MERCHANT): array
+{
+    $res = ckHttp('GET', '/wps/captcha/geetest?t=' . (string) (int) (microtime(true) * 1000), [
+        'headers' => [
+            'Accept'   => 'application/json, text/plain, */*',
+            'Merchant' => $merchant,
+            'Language' => 'EN',
+            'Referer'  => CK_ORIGIN . '/m/login',
+        ],
+    ]);
+    $v = is_array($res['body']) ? ($res['body']['value'] ?? null) : null;
+    if (!is_array($v) || empty($v['gt'])) {
+        return ['gt' => null, 'version' => null, 'error' => $res['error'] ?? ('HTTP ' . $res['status'])];
+    }
+    return [
+        'gt'      => (string) $v['gt'],
+        'version' => isset($v['version']) && is_scalar($v['version']) ? (string) $v['version'] : 'v4',
+        'error'   => null,
+    ];
 }
 
 function ckUuidV4(): string
@@ -578,4 +612,16 @@ function ckProfileRows(array $v): array
     ];
 
     return array_filter($rows, static fn($x) => $x !== null && $x !== '');
+}
+
+/** Wallet balance endpoint (v2). */
+function ckBalance(array $session): array
+{
+    return ckHttp('GET', '/wps/v2/wallets/balance', ['headers' => ckAuthHeaders($session)]);
+}
+
+/** Referral income overview (valid referral counts). */
+function ckReferralOverview(array $session): array
+{
+    return ckHttp('GET', '/wps/relay/ODSFE2_referralMyIncomeOverview', ['headers' => ckAuthHeaders($session)]);
 }

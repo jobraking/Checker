@@ -4,7 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/guard.php';
 
 require_once __DIR__ . '/ck-client.php';
-
+require_once dirname(__DIR__) . '/solver-lib.php';
 
 function h($value): string
 {
@@ -28,6 +28,175 @@ function savedLoad(string $file): array
     }
     $decoded = json_decode((string) file_get_contents($file), true);
     return is_array($decoded) ? array_values(array_filter($decoded, 'is_array')) : [];
+}
+
+function savedCaptchaRequired(string $message, string $code = ''): bool
+{
+    foreach ([$message, $code] as $text) {
+        $text = strtolower($text);
+        if ($text === '') {
+            continue;
+        }
+        if (strpos($text, 'captcha') !== false
+            || strpos($text, 'geetest') !== false
+            || strpos($text, 'verification code') !== false
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Update one saved entry in place while holding the file lock, so parallel
+ * balance checks cannot clobber each other's token refreshes.
+ *
+ * @param array<string,scalar> $changes
+ */
+function savedUpdateEntry(string $username, array $changes): void
+{
+    if ($username === '' || $changes === []) {
+        return;
+    }
+    $file = __DIR__ . '/pwd.json';
+    $handle = @fopen($file, 'c+');
+    if ($handle === false) {
+        return;
+    }
+    $locked = flock($handle, LOCK_EX);
+    $raw = stream_get_contents($handle);
+    $entries = is_string($raw) && $raw !== '' ? json_decode($raw, true) : [];
+    if (!is_array($entries)) {
+        $entries = [];
+    }
+    $changed = false;
+    foreach ($entries as $index => $entry) {
+        if (!is_array($entry) || (string) ($entry['username'] ?? '') !== $username) {
+            continue;
+        }
+        foreach ($changes as $key => $value) {
+            if ((string) ($entry[$key] ?? '') !== (string) $value) {
+                $entries[$index][$key] = $value;
+                $changed = true;
+            }
+        }
+        break;
+    }
+    if ($changed) {
+        rewind($handle);
+        ftruncate($handle, 0);
+        fwrite($handle, (string) json_encode(array_values($entries), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        fflush($handle);
+    }
+    flock($handle, LOCK_UN);
+    fclose($handle);
+}
+
+/**
+ * Keep the refreshed session token on disk so the next balance fetch does not
+ * pay for another captcha solve.
+ */
+function savedPersistToken(string $username, string $token): void
+{
+    if ($token !== '') {
+        savedUpdateEntry($username, ['token' => $token]);
+    }
+}
+
+/**
+ * Sign in, transparently solving the Geetest v4 gate that the vendor now
+ * requires on /wps/session/login. Balance fetches reuse this when the saved
+ * token has expired.
+ */
+function savedLoginWithCaptcha(string $username, string $password, string $merchant): array
+{
+    $result = ckLoginRetry($username, $password, $merchant);
+
+    for ($attempt = 0; $attempt < 3 && !$result['ok']; $attempt++) {
+        $error = (string) ($result['error'] ?? '');
+        $code = (string) ($result['code'] ?? '');
+        if (!savedCaptchaRequired($error, $code)) {
+            break;
+        }
+        $meta = ckGeetestMeta($merchant);
+        if ($meta['gt'] === null) {
+            break;
+        }
+        $usedKey = null;
+        $solverError = null;
+        $loginPage = function_exists('ckActiveOrigin') ? ckActiveOrigin() : CK_ORIGIN;
+        $solution = solver_solve_geetest_v4((string) $meta['gt'], $loginPage . '/m/login', $usedKey, $solverError);
+        if (!is_array($solution)) {
+            $result['solver_error'] = $solverError !== null && $solverError !== '' ? $solverError : 'captcha solve failed';
+            break;
+        }
+        $result = ckLoginRetry($username, $password, $merchant, null, 2, null, null, $solution);
+    }
+
+    if ($result['ok'] && $result['session'] !== null) {
+        savedPersistToken($username, (string) $result['session']['token']);
+    }
+
+    return $result;
+}
+
+/**
+ * Set one saved account to the target password, solving the login captcha and
+ * re-syncing pwd.json when the vendor already has the new password.
+ *
+ * @return array{status:string,message:string,changed:bool}
+ */
+function savedChangePasswordFor(string $username, string $oldPassword, string $newPassword, string $merchant): array
+{
+    if ($username === '' || $oldPassword === '') {
+        return ['status' => 'error', 'message' => 'missing credentials', 'changed' => false];
+    }
+    if ($oldPassword === $newPassword) {
+        return ['status' => 'skipped', 'message' => 'already ' . $newPassword, 'changed' => false];
+    }
+
+    $login = savedLoginWithCaptcha($username, $oldPassword, $merchant);
+    if (!$login['ok'] || $login['session'] === null) {
+        // The account may already carry the target password even though
+        // pwd.json still has the previous one.
+        $already = savedLoginWithCaptcha($username, $newPassword, $merchant);
+        if ($already['ok'] && $already['session'] !== null) {
+            savedUpdateEntry($username, [
+                'password'   => $newPassword,
+                'token'      => (string) $already['session']['token'],
+                'changed_at' => gmdate('c'),
+            ]);
+            return ['status' => 'ok', 'message' => 'already ' . $newPassword, 'changed' => true];
+        }
+        return ['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed'), 'changed' => false];
+    }
+
+    $session = $login['session'];
+    $res = ckChangePasswordRetry($session, $oldPassword, $newPassword, $merchant);
+    $body = is_array($res['body']) ? $res['body'] : [];
+    $error = (string) ($body['message'] ?? $res['error'] ?? ('HTTP ' . $res['status']));
+    $errorCode = (string) ($body['errorCode'] ?? '');
+
+    if (($body['success'] ?? null) !== true && savedCaptchaRequired($error, $errorCode)) {
+        $fresh = savedLoginWithCaptcha($username, $oldPassword, $merchant);
+        if ($fresh['ok'] && $fresh['session'] !== null) {
+            $session = $fresh['session'];
+            $res = ckChangePasswordRetry($session, $oldPassword, $newPassword, $merchant);
+            $body = is_array($res['body']) ? $res['body'] : [];
+            $error = (string) ($body['message'] ?? $res['error'] ?? ('HTTP ' . $res['status']));
+        }
+    }
+
+    if (($body['success'] ?? null) === true) {
+        savedUpdateEntry($username, [
+            'password'   => $newPassword,
+            'token'      => (string) $session['token'],
+            'changed_at' => gmdate('c'),
+        ]);
+        return ['status' => 'ok', 'message' => 'changed to ' . $newPassword, 'changed' => true];
+    }
+
+    return ['status' => 'error', 'message' => $error, 'changed' => false];
 }
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
@@ -60,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
     if ($postedCsrf === '' || !hash_equals($csrf, $postedCsrf)) {
         http_response_code(400);
-        if ($action === 'check_balance' || $action === 'check_all_live' || $action === 'live_balance') {
+        if (in_array($action, ['check_balance', 'check_all_live', 'live_balance', 'change_password_one', 'change_all_passwords'], true)) {
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['status' => 'error', 'message' => 'Invalid CSRF token. Reload the page.']);
         } else {
@@ -94,7 +263,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prof = ckProfile($session);
         if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
-            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            $login = savedLoginWithCaptcha($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
             if (!$login['ok'] || $login['session'] === null) {
                 echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
                 exit;
@@ -158,7 +327,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'live_balance') {
         header('Content-Type: application/json; charset=utf-8');
-        set_time_limit(60);
+        set_time_limit(180);
 
         $entry = null;
         foreach ($list as $candidate) {
@@ -188,7 +357,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prof = ckProfile($session);
         if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
-            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            $login = savedLoginWithCaptcha($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
             if (!$login['ok'] || $login['session'] === null) {
                 echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
                 exit;
@@ -248,7 +417,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prof = ckProfile($session);
         if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
-            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            $login = savedLoginWithCaptcha($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
             if (!$login['ok'] || $login['session'] === null) {
                 echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
                 exit;
@@ -269,6 +438,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         echo json_encode(['status' => 'ok', 'user' => $wantedUser, 'count' => count($results), 'results' => $results]);
+        exit;
+    }
+
+    if ($action === 'change_password_one') {
+        header('Content-Type: application/json; charset=utf-8');
+        set_time_limit(0);
+
+        $entry = null;
+        foreach ($list as $candidate) {
+            if ((string) ($candidate['username'] ?? '') === $wantedUser) {
+                $entry = $candidate;
+                break;
+            }
+        }
+        if ($entry === null) {
+            echo json_encode(['user' => $wantedUser, 'status' => 'error', 'message' => 'Account not found']);
+            exit;
+        }
+
+        $newPass = 'juari1122';
+        $result = savedChangePasswordFor(
+            $wantedUser,
+            (string) ($entry['password'] ?? ''),
+            $newPass,
+            ckResolveMerchant()['merchant']
+        );
+
+        echo json_encode([
+            'user'     => $wantedUser,
+            'status'   => $result['status'],
+            'message'  => $result['message'],
+            'password' => $result['changed'] ? $newPass : null,
+            'changed'  => $result['changed'],
+        ]);
+        exit;
+    }
+
+    if ($action === 'change_all_passwords') {
+        header('Content-Type: application/json; charset=utf-8');
+        set_time_limit(0);
+
+        $newPass = 'juari1122';
+        $merchant = ckResolveMerchant()['merchant'];
+        $results = [];
+        $changed = 0;
+        $failed = 0;
+        $skipped = 0;
+
+        foreach ($list as $entry) {
+            $user = trim((string) ($entry['username'] ?? ''));
+            $result = savedChangePasswordFor($user, (string) ($entry['password'] ?? ''), $newPass, $merchant);
+            if ($result['status'] === 'ok') {
+                $changed++;
+            } elseif ($result['status'] === 'skipped') {
+                $skipped++;
+            } else {
+                $failed++;
+            }
+            $results[] = ['user' => $user, 'status' => $result['status'], 'message' => $result['message']];
+            usleep(250000);
+        }
+
+        echo json_encode([
+            'status'  => 'ok',
+            'password'=> $newPass,
+            'changed' => $changed,
+            'failed'  => $failed,
+            'skipped' => $skipped,
+            'results' => $results,
+        ]);
         exit;
     }
 
@@ -709,6 +948,10 @@ details.raw pre{
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
           <span>Show passwords</span>
         </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="changeAllPasswords" title="Change every saved account password to juari1122">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 9-9M16 7l3 3"/></svg>
+          <span>Set juari1122</span>
+        </button>
         <button type="button" class="btn btn-primary btn-sm" id="checkVisible">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg>
           <span>Check visible</span>
@@ -809,6 +1052,10 @@ details.raw pre{
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
             <span>Copy</span>
           </button>
+          <button type="button" class="btn btn-ghost btn-sm js-set-pass" data-user="<?= h($account['username']) ?>" title="Change password to juari1122">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 9-9M16 7l3 3"/></svg>
+            <span>Set pass</span>
+          </button>
           <form method="post" class="delete-form push" onsubmit="return confirm('Delete this saved account? This cannot be undone.');">
             <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
             <input type="hidden" name="action" value="delete">
@@ -870,6 +1117,7 @@ details.raw pre{
   var royalOnly = document.getElementById('royalOnly');
   var revealAll = document.getElementById('revealAll');
   var checkVisible = document.getElementById('checkVisible');
+  var changeAllPasswords = document.getElementById('changeAllPasswords');
   var resultCount = document.getElementById('resultCount');
   var noMatches = document.getElementById('noMatches');
   var resetFilters = document.getElementById('resetFilters');
@@ -1245,6 +1493,12 @@ details.raw pre{
     var copyBtn = event.target.closest('.js-copy');
     if (copyBtn) {
       copyText(copyBtn.getAttribute('data-copy') || '', copyBtn);
+      return;
+    }
+
+    var setPassBtn = event.target.closest('.js-set-pass');
+    if (setPassBtn) {
+      changeOneSavedPassword(setPassBtn);
     }
   });
 
@@ -1331,7 +1585,7 @@ details.raw pre{
       if (controller) {
         controller.abort();
       }
-    }, 45000);
+    }, 170000);
 
     try {
       var response = await fetch(window.location.href, {
@@ -1366,6 +1620,109 @@ details.raw pre{
     }
   }
 
+  async function changeOneSavedPassword(button) {
+    var user = button.getAttribute('data-user');
+    if (!user) {
+      return;
+    }
+    if (!window.confirm('Change password for ' + user + ' to juari1122?')) {
+      return;
+    }
+    var label = button.querySelector('span');
+    var originalText = label ? label.textContent : 'Set pass';
+    button.disabled = true;
+    setButtonLabel(button, 'Changing…');
+
+    var body = new FormData();
+    body.append('csrf', CSRF);
+    body.append('action', 'change_password_one');
+    body.append('user', user);
+
+    try {
+      var response = await fetch(window.location.href, {
+        method: 'POST',
+        body: body,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      var text = await response.text();
+      var data;
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        throw new Error('Unexpected server response');
+      }
+      if (!data || (data.status !== 'ok' && data.status !== 'skipped')) {
+        throw new Error((data && data.message) || 'Password change failed');
+      }
+      window.alert(data.message || (data.status === 'skipped' ? 'Already juari1122' : 'Password changed'));
+      if (data.changed) {
+        window.location.reload();
+      }
+    } catch (error) {
+      window.alert(error && error.message ? error.message : 'Password change failed');
+    } finally {
+      button.disabled = false;
+      setButtonLabel(button, originalText);
+    }
+  }
+
+  async function changeAllSavedPasswords() {
+    if (!changeAllPasswords) {
+      return;
+    }
+    if (!cards.length) {
+      window.alert('No saved accounts to update.');
+      return;
+    }
+    if (!window.confirm('Change all ' + cards.length + ' saved account password(s) to juari1122?')) {
+      return;
+    }
+    var label = changeAllPasswords.querySelector('span');
+    var originalText = label ? label.textContent : 'Set juari1122';
+    changeAllPasswords.disabled = true;
+    setButtonLabel(changeAllPasswords, 'Changing…');
+
+    var body = new FormData();
+    body.append('csrf', CSRF);
+    body.append('action', 'change_all_passwords');
+
+    try {
+      var response = await fetch(window.location.href, {
+        method: 'POST',
+        body: body,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      var text = await response.text();
+      var data;
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        throw new Error('Unexpected server response');
+      }
+      if (!data || data.status !== 'ok') {
+        throw new Error((data && data.message) || 'Password change failed');
+      }
+      var failures = (data.results || []).filter(function (item) {
+        return item.status === 'error';
+      });
+      var summary = 'Changed: ' + data.changed + '\nFailed: ' + data.failed + '\nAlready set: ' + data.skipped;
+      if (failures.length) {
+        summary += '\n\nFailed accounts:\n' + failures.map(function (item) {
+          return item.user + ' — ' + (item.message || 'error');
+        }).join('\n');
+      }
+      window.alert(summary);
+      if (data.changed > 0) {
+        window.location.reload();
+      }
+    } catch (error) {
+      window.alert(error && error.message ? error.message : 'Password change failed');
+    } finally {
+      changeAllPasswords.disabled = false;
+      setButtonLabel(changeAllPasswords, originalText);
+    }
+  }
+
   async function autoLoadBalances() {
     var queue = cards.slice();
     var workers = Math.min(3, queue.length);
@@ -1388,6 +1745,9 @@ details.raw pre{
   }
 
   autoLoadBalances();
+  if (changeAllPasswords) {
+    changeAllPasswords.addEventListener('click', changeAllSavedPasswords);
+  }
   search.addEventListener('input', applyFilters);
   levelFilter.addEventListener('change', applyFilters);
   royalOnly.addEventListener('change', applyFilters);

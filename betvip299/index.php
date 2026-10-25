@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/guard.php';
 
 require_once __DIR__ . '/ck-client.php';
+require_once dirname(__DIR__) . '/solver-lib.php';
 
 /**
  * Local web interface for account checking.
@@ -198,6 +199,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         $r = ckLoginRetry($user, $pass, $merchant, null, 1, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null, $geetest);
+
+        $bulkRequest = (string) ($_POST['bulk'] ?? '') !== '' || (string) ($_POST['no_captcha'] ?? '') === '1';
+        if (!$r['ok'] && $bulkRequest) {
+            $m1 = (string) ($r['error'] ?? '');
+            $c1 = (string) ($r['code'] ?? '');
+            $capAgain = stripos($m1, 'captcha') !== false
+                || stripos($c1, 'captcha') !== false
+                || stripos($m1, 'verification code') !== false
+                || stripos($c1, 'geetest') !== false;
+            if ($capAgain) {
+                set_time_limit(0);
+                for ($attempt = 0; $attempt < 2 && !$r['ok']; $attempt++) {
+                    $gt = ckGeetestMeta($merchant);
+                    if ($gt['gt'] === null) {
+                        break;
+                    }
+                    $solverKey = null;
+                    $solverError = null;
+                    $solution = solver_solve_geetest_v4((string) $gt['gt'], CK_ORIGIN . '/m/login', $solverKey, $solverError);
+                    if ($solution === null) {
+                        break;
+                    }
+                    $r = ckLoginRetry($user, $pass, $merchant, null, 1, null, null, $solution);
+                }
+            }
+        }
+
         if ($r['ok'] && $r['session'] !== null) {
             $prof = ckProfile($r['session']);
             $v = is_array($prof['body']) ? ($prof['body']['value'] ?? $prof['body']['data'] ?? []) : [];
@@ -1425,33 +1453,8 @@ function solveGeetest(gt) {
       row.pill.className = 'pill warn';
       row.pill.textContent = 'Captcha';
       row.sub.hidden = false;
-      row.sub.textContent = 'Solve the captcha to finish this check';
-      row.actions.textContent = '';
-      const gt = j.geetest && j.geetest.gt ? j.geetest.gt : '';
-      const solveBtn = makeButton('Solve captcha', 'btn btn-primary btn-sm', async function () {
-        if (!gt) {
-          alert('Captcha widget unavailable. Use Manual.');
-          return;
-        }
-        solveBtn.disabled = true;
-        solveBtn.textContent = 'Solving…';
-        try {
-          const v = await solveGeetest(gt);
-          const j2 = await post({
-            action: 'bulk_check_one',
-            user: state.user,
-            pass: state.pass,
-            geetest: JSON.stringify(v)
-          });
-          paintRow(row, state, j2);
-        } catch (err) {
-          solveBtn.disabled = false;
-          solveBtn.textContent = 'Solve captcha';
-          row.sub.hidden = false;
-          row.sub.textContent = err.message || 'Captcha failed.';
-        }
-      });
-      row.actions.append(solveBtn, makeButton('Manual', 'btn btn-ghost btn-sm', function () { manualCheck(state); }));
+      row.sub.textContent = 'Auto solver failed or is not configured';
+      addActions(row.actions, state, row, false);
       return;
     }
 

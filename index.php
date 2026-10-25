@@ -2,6 +2,75 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/guard.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/solver-lib.php';
+
+$solverFlash = null;
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if (!csrf_check($_POST['csrf'] ?? null)) {
+        $solverFlash = ['kind' => 'error', 'text' => 'Invalid session token. Reload the page.'];
+    } else {
+        $action = (string) ($_POST['action'] ?? '');
+        if ($action === 'solver_save') {
+            $cfg = solver_config();
+            $cfg['enabled'] = !empty($_POST['enabled']);
+            $remove = $_POST['remove'] ?? [];
+            $remove = is_array($remove) ? array_map('strval', $remove) : [];
+            $accounts = [];
+            foreach ($cfg['accounts'] as $i => $row) {
+                if (in_array((string) $i, $remove, true)) {
+                    continue;
+                }
+                $accounts[] = $row;
+            }
+            $label = trim((string) ($_POST['new_label'] ?? ''));
+            $key = trim((string) ($_POST['new_key'] ?? ''));
+            $un = trim((string) ($_POST['new_username'] ?? ''));
+            $pw = (string) ($_POST['new_password'] ?? '');
+            if ($key !== '' || $un !== '' || $pw !== '') {
+                $accounts[] = ['label' => $label, 'key' => $key, 'username' => $un, 'password' => $pw];
+            }
+            $cfg['accounts'] = $accounts;
+            $solverFlash = solver_save($cfg)
+                ? ['kind' => 'ok', 'text' => 'Solver settings saved.']
+                : ['kind' => 'error', 'text' => 'Could not write solver.json.'];
+        } elseif ($action === 'solver_clear') {
+            $cfg = solver_config();
+            $cfg['enabled'] = false;
+            $cfg['accounts'] = [];
+            solver_save($cfg);
+            $solverFlash = ['kind' => 'ok', 'text' => 'Solver keys cleared.'];
+        }
+    }
+}
+$solverCfg = solver_config();
+$solverCsrf = csrf_token();
+$createdAccounts = [];
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '') === 'create_accounts' && csrf_check($_POST['csrf'] ?? null)) {
+    $made = [];
+    try {
+        $pdo = db();
+        $insert = $pdo->prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
+        for ($i = 0; $i < 10; $i++) {
+            $username = 'd3m09_' . strtolower(bin2hex(random_bytes(4)));
+            $password = bin2hex(random_bytes(5));
+            try {
+                $insert->execute([$username, password_hash($password, PASSWORD_DEFAULT)]);
+            } catch (PDOException $e) {
+                continue;
+            }
+            $made[] = ['username' => $username, 'password' => $password];
+        }
+        $createdAccounts = $made;
+        $flashText = count($made) . ' account(s) created. Copy the passwords now — they are not shown again.';
+        $solverFlash = $made === []
+            ? ['kind' => 'error', 'text' => 'No accounts were created.']
+            : ['kind' => 'ok', 'text' => $flashText];
+    } catch (Throwable $e) {
+        $solverFlash = ['kind' => 'error', 'text' => 'Database unavailable.'];
+    }
+}
 
 $sites = [
     ['href' => '/ck44/', 'name' => 'CK444', 'domain' => 'ck444.ai'],
@@ -223,6 +292,36 @@ h2{margin:8px 0 10px;font-size:clamp(1.5rem,2.6vw,2.1rem);letter-spacing:-.025em
 .site:hover .site-arrow{transform:translateX(3px);color:var(--brand)}
 .site-arrow svg{width:16px;height:16px}
 .sites-more{display:flex;justify-content:center;margin-top:22px}
+.solver-card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:24px;box-shadow:var(--shadow-sm);
+}
+.solver-flash{border-radius:12px;padding:11px 14px;font-size:.88rem;font-weight:650;margin-bottom:16px}
+.solver-flash.ok{background:var(--mint-soft);color:#087a5b}
+.solver-flash.error{background:#fff0ef;color:#b42318}
+.solver-toggle{display:inline-flex;align-items:center;gap:10px;font-weight:750;font-size:.92rem}
+.solver-toggle input{width:18px;height:18px;accent-color:var(--brand)}
+.solver-hint{margin:10px 0 18px;color:var(--muted);font-size:.85rem}
+.solver-list{display:grid;gap:8px;margin:0 0 18px}
+.solver-item{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:.85rem;
+}
+.solver-item b{min-width:90px}
+.solver-item code{color:var(--muted);font-size:.8rem}
+.solver-item .rm{margin-left:auto;display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.8rem;font-weight:650}
+.solver-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.solver-grid label{display:block;font-size:.76rem;font-weight:750;color:var(--muted);margin-bottom:5px}
+.solver-grid input{
+  width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+  font-size:.9rem;background:#fff;color:var(--ink);outline:none;
+}
+.solver-grid input:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(8,119,237,.1)}
+.solver-actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.created-card{margin-top:16px}
+.created-card h3{margin:0 0 6px;font-size:1rem}
+.created-list{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.solver-actions .danger{color:#b42318;border-color:#f2c7c2}
 .cta{padding:20px 0 70px}
 .cta-box{
   position:relative;overflow:hidden;
@@ -247,11 +346,12 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
   .hero-grid{grid-template-columns:1fr;gap:30px}
   .features{grid-template-columns:repeat(2,minmax(0,1fr))}
   .sites{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .solver-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:720px){
   .nav{display:none}
   .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .features,.sites{grid-template-columns:1fr}
+  .features,.sites,.solver-grid,.created-list{grid-template-columns:1fr}
   .cta-box{padding:28px 24px}
   .cta-actions{margin-left:0}
 }
@@ -272,6 +372,7 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
     <nav class="nav" aria-label="Primary">
       <a href="#features">Features</a>
       <a href="#sites">Sites</a>
+      <a href="#solver">Solver</a>
       <a href="/showcase.php">Showcase</a>
     </nav>
     <a class="btn btn-ghost" href="/showcase.php">
@@ -371,6 +472,93 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
         </a>
       </div>
+    </div>
+  </section>
+
+  <section id="solver">
+    <div class="shell">
+      <div class="section-head">
+        <span class="kicker">Captcha</span>
+        <h2>Auto captcha solver</h2>
+        <p>Used by the bulk checkers when GeeTest v4 appears. Keys are tried in order, so you can keep several solver accounts in the pool.</p>
+      </div>
+
+      <?php if (is_array($solverFlash)): ?>
+        <div class="solver-flash <?= $solverFlash['kind'] === 'ok' ? 'ok' : 'error' ?>"><?= htmlspecialchars($solverFlash['text'], ENT_QUOTES, 'UTF-8') ?></div>
+      <?php endif; ?>
+
+      <form class="solver-card" method="post" autocomplete="off">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($solverCsrf, ENT_QUOTES, 'UTF-8') ?>">
+        <label class="solver-toggle">
+          <input type="checkbox" name="enabled" value="1" <?= $solverCfg['enabled'] ? 'checked' : '' ?>>
+          Enable auto-solve during bulk checks
+        </label>
+        <p class="solver-hint">Provider: 2Captcha. Add one or more API keys. Username/password are stored for reference and do not replace the API key.</p>
+
+        <?php if ($solverCfg['accounts'] !== []): ?>
+          <div class="solver-list">
+            <?php foreach ($solverCfg['accounts'] as $i => $row): ?>
+              <div class="solver-item">
+                <b><?= htmlspecialchars($row['label'] !== '' ? $row['label'] : 'Account ' . ($i + 1), ENT_QUOTES, 'UTF-8') ?></b>
+                <code><?= htmlspecialchars(solver_mask($row['key']) !== '' ? solver_mask($row['key']) : '(no api key)', ENT_QUOTES, 'UTF-8') ?></code>
+                <?php if ($row['username'] !== ''): ?>
+                  <code><?= htmlspecialchars($row['username'], ENT_QUOTES, 'UTF-8') ?></code>
+                <?php endif; ?>
+                <label class="rm"><input type="checkbox" name="remove[]" value="<?= (int) $i ?>"> remove</label>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php else: ?>
+          <p class="solver-hint">No keys saved yet.</p>
+        <?php endif; ?>
+
+        <div class="solver-grid">
+          <div>
+            <label for="new_label">Label</label>
+            <input id="new_label" name="new_label" placeholder="main">
+          </div>
+          <div>
+            <label for="new_key">2Captcha API key</label>
+            <input id="new_key" name="new_key" placeholder="32-character key">
+          </div>
+          <div>
+            <label for="new_username">Username (optional)</label>
+            <input id="new_username" name="new_username" placeholder="account login">
+          </div>
+          <div>
+            <label for="new_password">Password (optional)</label>
+            <input id="new_password" name="new_password" type="password" placeholder="account password">
+          </div>
+        </div>
+
+        <div class="solver-actions">
+          <button class="btn btn-primary" type="submit" name="action" value="solver_save">Save solver settings</button>
+          <button class="btn btn-ghost danger" type="submit" name="action" value="solver_clear" onclick="return confirm('Clear all solver keys?')">Clear all</button>
+        </div>
+      </form>
+      <?php if ($createdAccounts !== []): ?>
+        <div class="solver-card created-card">
+          <h3>New login accounts</h3>
+          <p class="solver-hint">Passwords are shown once. Copy them before leaving this page.</p>
+          <div class="created-list">
+            <?php foreach ($createdAccounts as $row): ?>
+              <div class="solver-item">
+                <b><?= htmlspecialchars($row['username'], ENT_QUOTES, 'UTF-8') ?></b>
+                <code><?= htmlspecialchars($row['password'], ENT_QUOTES, 'UTF-8') ?></code>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        </div>
+      <?php endif; ?>
+
+      <form class="solver-card created-card" method="post">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($solverCsrf, ENT_QUOTES, 'UTF-8') ?>">
+        <input type="hidden" name="action" value="create_accounts">
+        <div class="solver-actions">
+          <button class="btn btn-primary" type="submit" onclick="return confirm('Create 10 new login accounts for this system?')">Create 10 accounts</button>
+        </div>
+        <p class="solver-hint">Generates 10 unique logins in the users table, shown once with their passwords.</p>
+      </form>
     </div>
   </section>
 

@@ -80,10 +80,34 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '')
             $made[] = ['username' => $username, 'password' => $password, 'api_key' => $apiKey];
         }
         $createdAccounts = $made;
-        $flashText = count($made) . ' account(s) created. Copy the passwords now — they are not shown again.';
-        $solverFlash = $made === []
-            ? ['kind' => 'error', 'text' => 'No accounts were created.']
-            : ['kind' => 'ok', 'text' => $flashText];
+        if ($made !== []) {
+            $cfg = solver_config();
+            $existing = solver_keys($cfg);
+            $added = 0;
+            foreach ($made as $row) {
+                if (in_array($row['api_key'], $existing, true)) {
+                    continue;
+                }
+                $cfg['accounts'][] = [
+                    'label'      => $row['username'],
+                    'key'        => $row['api_key'],
+                    'username'   => $row['username'],
+                    'password'   => $row['password'],
+                    'status'     => 'ok',
+                    'last_error' => '',
+                    'used_at'    => '',
+                ];
+                $added++;
+            }
+            if ($added > 0) {
+                $cfg['enabled'] = true;
+                solver_save($cfg);
+            }
+            $flashText = count($made) . ' account(s) created and saved to the solver pool. Copy them now — passwords and keys are not shown again.';
+            $solverFlash = ['kind' => 'ok', 'text' => $flashText];
+        } else {
+            $solverFlash = ['kind' => 'error', 'text' => 'No accounts were created.'];
+        }
     } catch (Throwable $e) {
         $solverFlash = ['kind' => 'error', 'text' => 'Database unavailable.'];
     }
@@ -594,7 +618,7 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
         <div class="solver-actions">
           <button class="btn btn-primary" type="submit" onclick="return confirm('Create 10 new login accounts for this system?')">Create 10 accounts</button>
         </div>
-        <p class="solver-hint">Generates 10 unique logins in the users table, shown once with their passwords.</p>
+        <p class="solver-hint">Generates 10 unique logins with 32-char keys, saves them to the users table and the solver pool automatically. Shown once.</p>
       </form>
     </div>
   </section>

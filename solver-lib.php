@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/geetest-local.php';
+
 const SOLVER_FILE = __DIR__ . '/solver.json';
 const SOLVER_ENDPOINT_CREATE = 'https://api.2captcha.com/createTask';
 const SOLVER_ENDPOINT_RESULT = 'https://api.2captcha.com/getTaskResult';
@@ -220,9 +222,18 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
     if (!$cfg['enabled']) {
         return null;
     }
+
+    $localError = null;
+    $local = gtl_solve($captchaId, $pageUrl, $localError);
+    if ($local !== null) {
+        $usedKey = 'local';
+        $error = null;
+        return $local;
+    }
+
     $keys = solver_keys($cfg);
     if ($keys === []) {
-        $error = 'no usable solver key';
+        $error = 'local solver failed: ' . ($localError !== null && $localError !== '' ? $localError : 'unknown error');
         solver_ensure_slot();
         return null;
     }

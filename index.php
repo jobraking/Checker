@@ -538,7 +538,7 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
       <div class="section-head">
         <span class="kicker">Captcha</span>
         <h2>Auto captcha solver</h2>
-        <p>Used by the bulk checkers when GeeTest v4 appears. Keys are tried in order, so you can keep several solver accounts in the pool.</p>
+        <p>Used by the bulk checkers when GeeTest v4 appears. The local solver runs first for free, then keys are tried in order.</p>
       </div>
 
       <?php if (is_array($solverFlash)): ?>
@@ -551,10 +551,10 @@ footer{border-top:1px solid var(--line);padding:26px 0 34px;color:var(--muted);f
           <input type="checkbox" name="enabled" value="1" <?= $solverCfg['enabled'] ? 'checked' : '' ?>>
           Enable auto-solve during bulk checks
         </label>
-        <p class="solver-hint">Provider: 2Captcha. Add one or more API keys. Username/password are stored for reference and do not replace the API key.</p>
+        <p class="solver-hint">A built-in local solver handles GeeTest AI captchas for free and runs before any key. Add 2Captcha keys only as fallback; username/password are stored for reference.</p>
 
         <?php if ($solverNeedsKey): ?>
-          <div class="solver-flash error">Auto-solve is on but no usable key is live. Paste a key into a slot below and save.</div>
+          <div class="solver-flash ok">No API keys saved. The built-in local GeeTest solver runs first; keys are only a fallback.</div>
         <?php endif; ?>
         <?php if (($solverCfg['last_error'] ?? '') !== ''): ?>
           <div class="solver-flash error"><?= htmlspecialchars($solverCfg['last_error'], ENT_QUOTES, 'UTF-8') ?></div>

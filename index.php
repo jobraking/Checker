@@ -69,15 +69,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '')
         $pdo = db();
         $insert = $pdo->prepare('INSERT INTO users (username, password_hash, api_key) VALUES (?, ?, ?)');
         for ($i = 0; $i < 10; $i++) {
-            $username = 'd3m09_' . strtolower(bin2hex(random_bytes(4)));
-            $password = bin2hex(random_bytes(5));
-            $apiKey = bin2hex(random_bytes(16));
-            try {
-                $insert->execute([$username, password_hash($password, PASSWORD_DEFAULT), $apiKey]);
-            } catch (PDOException $e) {
-                continue;
+            for ($attempt = 0; $attempt < 25; $attempt++) {
+                $username = str_pad((string) random_int(0, 99999), 5, '0', STR_PAD_LEFT);
+                $password = bin2hex(random_bytes(5));
+                $apiKey = bin2hex(random_bytes(16));
+                try {
+                    $insert->execute([$username, password_hash($password, PASSWORD_DEFAULT), $apiKey]);
+                } catch (PDOException $e) {
+                    continue;
+                }
+                $made[] = ['username' => $username, 'password' => $password, 'api_key' => $apiKey];
+                break;
             }
-            $made[] = ['username' => $username, 'password' => $password, 'api_key' => $apiKey];
         }
         $createdAccounts = $made;
         if ($made !== []) {

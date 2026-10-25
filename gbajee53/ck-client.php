@@ -149,16 +149,21 @@ function ckProbeOrigin(string $origin): bool
     return (bool) preg_match('/^[0-9a-fA-F]{256,}$/', trim($raw));
 }
 
-/** Pick the first origin that answers; cache the winner per node. */
+/** Use the cached origin directly; probing only happens on a forced re-resolve. */
 function ckResolveOrigin(bool $force = false): string
 {
     static $resolved = null;
-    if (!$force && $resolved !== null && $resolved === ckActiveOrigin() && !isset(ckBlockedOrigins()[$resolved])) {
+    if (!$force && $resolved !== null) {
+        return $resolved;
+    }
+
+    $current = ckActiveOrigin();
+    if (!$force) {
+        $resolved = $current;
         return $resolved;
     }
 
     $blocked = ckBlockedOrigins();
-    $current = ckActiveOrigin();
     if (!isset($blocked[$current]) && ckProbeOrigin($current)) {
         $resolved = $current;
         return $resolved;

@@ -324,7 +324,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 echo json_encode($capOut);
             } else {
-                echo json_encode(['user' => $user, 'status' => 'invalid', 'token' => null, 'details' => null, 'balance' => null, 'error' => null]);
+                echo json_encode(['user' => $user, 'status' => 'invalid', 'token' => null, 'details' => null, 'balance' => null, 'error' => $errMsg, 'code' => $errCode, 'response' => $r['body'] ?? null]);
             }
         }
         exit;
@@ -347,7 +347,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($r['ok'] && $r['session'] !== null) {
                 $bulkResults[] = ['user' => $parts[0], 'status' => 'valid', 'token' => ckMaskToken($r['session']['token']), 'error' => null];
             } else {
-                $bulkResults[] = ['user' => $parts[0], 'status' => 'invalid', 'token' => null, 'error' => (string) $r['error']];
+                $bulkResults[] = ['user' => $parts[0], 'status' => 'invalid', 'token' => null, 'error' => (string) $r['error'], 'code' => $r['code'] ?? null, 'response' => $r['body'] ?? null];
             }
             usleep(200000);
         }
@@ -447,6 +447,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'code'          => $result['code'],
                     'captcha'       => !empty($_SESSION['captcha_image']),
                     'captcha_image' => $_SESSION['captcha_image'] ?? null,
+                    'response'      => $result['body'] ?? null,
                 ];
                 if (stripos($errMsg, 'captcha') !== false || stripos($errCode, 'captcha') !== false) {
                     $gt = ckGeetestMeta($merchant);
@@ -1263,7 +1264,8 @@ function solveGeetest(gt) {
           showStatus(status, err.message || 'Captcha failed.', 'error');
         }
       } else {
-        showStatus(status, j.message || 'Check failed.', 'error');
+        const failMsg = (j.message || 'Check failed.') + (j.code ? ' [' + j.code + ']' : '');
+        showStatus(status, failMsg, 'error');
         if (j.captcha && j.captcha_image) showSingleCaptcha(j.captcha_image);
       }
     } catch (err) {
@@ -1447,8 +1449,12 @@ function solveGeetest(gt) {
 
     if (j.status === 'invalid') {
       row.pill.className = 'pill err';
-      row.pill.textContent = 'Invalid';
+      row.pill.textContent = j.code || 'Invalid';
       row.balance.textContent = '—';
+      if (j.error) {
+        row.sub.hidden = false;
+        row.sub.textContent = j.error;
+      }
       addActions(row.actions, state, row, false);
       return;
     }

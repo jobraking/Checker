@@ -293,6 +293,9 @@ function ckLogin(string $username, string $password, string $merchant = CK_DEFAU
             'error'   => $res['body']['message'] ?? ('HTTP ' . $res['status']),
             'code'    => $res['body']['errorCode'] ?? null,
             'session' => null,
+            'status'  => $res['status'],
+            'body'    => $res['body'],
+            'raw'     => $res['raw'],
         ];
     }
 

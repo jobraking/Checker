@@ -290,7 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'captcha_id'    => $cap['id'],
                 ]);
             } else {
-                echo json_encode(['user' => $user, 'status' => 'invalid', 'token' => null, 'details' => null, 'balance' => null, 'error' => null]);
+                echo json_encode(['user' => $user, 'status' => 'invalid', 'token' => null, 'details' => null, 'balance' => null, 'error' => $errMsg, 'code' => $errCode, 'response' => $r['body'] ?? null]);
             }
         }
         exit;
@@ -411,6 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'code'          => $result['code'],
                     'captcha'       => !empty($_SESSION['captcha_image']),
                     'captcha_image' => $_SESSION['captcha_image'] ?? null,
+                    'response'      => $result['body'] ?? null,
                 ]);
                 exit;
             }
@@ -1143,7 +1144,8 @@ function askCaptcha(src) {
           result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
       } else {
-        showStatus(status, j.message || 'Check failed.', 'error');
+        const failMsg = (j.message || 'Check failed.') + (j.code ? ' [' + j.code + ']' : '');
+        showStatus(status, failMsg, 'error');
         if (j.captcha && j.captcha_image) showSingleCaptcha(j.captcha_image);
       }
     } catch (err) {
@@ -1362,7 +1364,11 @@ function askCaptcha(src) {
       } else if (j.status === 'invalid') {
         invalid++;
         row.pill.className = 'pill err';
-        row.pill.textContent = 'Invalid';
+        row.pill.textContent = j.code || 'Invalid';
+        if (j.error) {
+          row.sub.hidden = false;
+          row.sub.textContent = j.error;
+        }
         addActions(row.actions, state, row, false);
       } else {
         errors++;

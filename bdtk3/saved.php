@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/guard.php';
 
 require_once __DIR__ . '/ck-client.php';
+require_once dirname(__DIR__) . '/solver-lib.php';
 
 function h($value): string
 {
@@ -27,6 +28,43 @@ function savedLoad(string $file): array
     }
     $decoded = json_decode((string) file_get_contents($file), true);
     return is_array($decoded) ? array_values(array_filter($decoded, 'is_array')) : [];
+}
+
+function savedCaptchaHit(array $r): bool
+{
+    $m = (string) ($r['error'] ?? '');
+    $c = (string) ($r['code'] ?? '');
+    return stripos($m, 'captcha') !== false
+        || stripos($c, 'captcha') !== false
+        || stripos($m, 'verification code') !== false
+        || stripos($c, 'geetest') !== false;
+}
+
+/** Sign in, solving a GeeTest challenge locally when the vendor demands one. */
+function savedLogin(string $user, string $pass, string $merchant): array
+{
+    $r = ckLoginRetry($user, $pass, $merchant);
+    if ($r['ok'] || !savedCaptchaHit($r)) {
+        return $r;
+    }
+
+    @set_time_limit(0);
+    for ($i = 0; $i < 2; $i++) {
+        $gt = ckGeetestMeta($merchant);
+        if (($gt['gt'] ?? null) === null) {
+            break;
+        }
+        $solverError = null;
+        $solution = solver_solve_geetest_v4((string) $gt['gt'], CK_ORIGIN . '/m/login', $solverKey, $solverError);
+        if ($solution === null) {
+            break;
+        }
+        $r = ckLoginRetry($user, $pass, $merchant, null, 1, null, null, $solution);
+        if ($r['ok'] || !savedCaptchaHit($r)) {
+            return $r;
+        }
+    }
+    return $r;
 }
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
@@ -59,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedCsrf = isset($_POST['csrf']) && is_string($_POST['csrf']) ? $_POST['csrf'] : '';
     if ($postedCsrf === '' || !hash_equals($csrf, $postedCsrf)) {
         http_response_code(400);
-        if ($action === 'check_balance' || $action === 'check_all_live' || $action === 'live_balance') {
+        if ($action === 'check_balance' || $action === 'check_all_live' || $action === 'live_balance' || $action === 'change_password') {
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['status' => 'error', 'message' => 'Invalid CSRF token. Reload the page.']);
         } else {
@@ -93,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prof = ckProfile($session);
         if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
-            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            $login = savedLogin($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
             if (!$login['ok'] || $login['session'] === null) {
                 echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
                 exit;
@@ -187,7 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prof = ckProfile($session);
         if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
-            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            $login = savedLogin($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
             if (!$login['ok'] || $login['session'] === null) {
                 echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
                 exit;
@@ -247,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prof = ckProfile($session);
         if ($prof['status'] === 401 || (is_array($prof['body']) && ($prof['body']['success'] ?? null) === false)) {
-            $login = ckLoginRetry($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
+            $login = savedLogin($wantedUser, (string) ($entry['password'] ?? ''), $merchant);
             if (!$login['ok'] || $login['session'] === null) {
                 echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
                 exit;
@@ -268,6 +306,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         echo json_encode(['status' => 'ok', 'user' => $wantedUser, 'count' => count($results), 'results' => $results]);
+        exit;
+    }
+
+    if ($action === 'change_password') {
+        header('Content-Type: application/json; charset=utf-8');
+        set_time_limit(0);
+
+        $newPass = (string) ($_POST['new_password'] ?? '');
+        $confirm = (string) ($_POST['confirm_password'] ?? '');
+
+        $entry = null;
+        foreach ($list as $candidate) {
+            if (($candidate['username'] ?? '') === $wantedUser) {
+                $entry = $candidate;
+                break;
+            }
+        }
+        if ($entry === null) {
+            echo json_encode(['status' => 'error', 'message' => 'Account not found']);
+            exit;
+        }
+        if (strlen($newPass) < 6) {
+            echo json_encode(['status' => 'error', 'message' => 'New password must be at least 6 characters']);
+            exit;
+        }
+        if ($newPass !== $confirm) {
+            echo json_encode(['status' => 'error', 'message' => 'New password and confirmation do not match']);
+            exit;
+        }
+
+        $oldPass = (string) ($entry['password'] ?? '');
+        if ($oldPass === '') {
+            echo json_encode(['status' => 'error', 'message' => 'No saved password for this account']);
+            exit;
+        }
+        if ($oldPass === $newPass) {
+            echo json_encode(['status' => 'error', 'message' => 'New password must differ from the current one']);
+            exit;
+        }
+
+        $merchant = ckResolveMerchant()['merchant'];
+        $login = savedLogin($wantedUser, $oldPass, $merchant);
+        if (!$login['ok'] || $login['session'] === null) {
+            echo json_encode(['status' => 'error', 'message' => (string) ($login['error'] ?? 'login failed')]);
+            exit;
+        }
+
+        $res = ckChangePasswordRetry($login['session'], $oldPass, $newPass, $merchant);
+        $ok = is_array($res['body']) && ($res['body']['success'] ?? null) === true;
+        if (!$ok) {
+            $msg = is_array($res['body'])
+                ? (string) ($res['body']['message'] ?? $res['body']['errorCode'] ?? 'Password change failed')
+                : (string) ($res['error'] ?? ('HTTP ' . $res['status']));
+            echo json_encode(['status' => 'error', 'message' => $msg, 'response' => $res['body']]);
+            exit;
+        }
+
+        $token = (string) ($login['session']['token'] ?? '');
+        $updated = false;
+        foreach ($list as &$row) {
+            if (($row['username'] ?? '') === $wantedUser) {
+                $row['password'] = $newPass;
+                if ($token !== '') {
+                    $row['token'] = $token;
+                }
+                $row['changed_at'] = gmdate('c');
+                $updated = true;
+                break;
+            }
+        }
+        unset($row);
+
+        if ($updated) {
+            file_put_contents($file, json_encode($list, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+            @chmod($file, 0600);
+        }
+
+        echo json_encode([
+            'status'   => 'ok',
+            'user'     => $wantedUser,
+            'password' => $newPass,
+            'message'  => 'Password changed and saved',
+        ]);
         exit;
     }
 
@@ -631,6 +752,26 @@ details.raw pre{
 @media(prefers-reduced-motion:reduce){
   *{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+.pass-dialog{
+  border:1px solid var(--line);border-radius:16px;padding:0;max-width:400px;width:calc(100% - 32px);
+  background:var(--surface);color:var(--ink);box-shadow:0 30px 70px rgba(15,42,70,.28);
+}
+.pass-dialog::backdrop{background:rgba(15,31,46,.45);backdrop-filter:blur(2px)}
+.pass-form{display:flex;flex-direction:column;gap:12px;padding:20px}
+.pass-form h3{margin:0;font-size:1.05rem;letter-spacing:-.02em}
+.pass-form p{margin:0;color:var(--muted);font-size:.78rem}
+.pass-form p b{color:var(--ink)}
+.pass-field{display:flex;flex-direction:column;gap:5px}
+.pass-field label{font-size:.62rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.pass-field input{
+  border:1.5px solid var(--line);border-radius:10px;background:#fbfdfc;padding:10px 12px;
+  font:inherit;font-size:.85rem;color:var(--ink);outline:none;
+}
+.pass-field input:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(15,159,122,.1);background:#fff}
+.pass-msg{min-height:18px;font-size:.76rem;font-weight:650}
+.pass-msg.ok{color:var(--brand-dark)}
+.pass-msg.err{color:var(--danger)}
+.pass-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}
 </style>
 </head>
 <body>
@@ -808,6 +949,10 @@ details.raw pre{
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
             <span>Copy</span>
           </button>
+          <button type="button" class="btn btn-ghost btn-sm js-change-pass" data-user="<?= h($account['username']) ?>">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Change password</span>
+          </button>
           <form method="post" class="delete-form push" onsubmit="return confirm('Delete this saved account? This cannot be undone.');">
             <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
             <input type="hidden" name="action" value="delete">
@@ -843,6 +988,26 @@ details.raw pre{
     </div>
     <?php endif; ?>
   </div>
+
+  <dialog id="passDialog" class="pass-dialog" aria-labelledby="passTitle">
+    <form id="passForm" class="pass-form" novalidate>
+      <h3 id="passTitle">Change password</h3>
+      <p>Account <b id="passTarget"></b> — enter the new password twice.</p>
+      <div class="pass-field">
+        <label for="newPassword">New password</label>
+        <input type="password" id="newPassword" autocomplete="new-password" minlength="6" required>
+      </div>
+      <div class="pass-field">
+        <label for="confirmPassword">Confirm new password</label>
+        <input type="password" id="confirmPassword" autocomplete="new-password" minlength="6" required>
+      </div>
+      <p class="pass-msg" id="passMsg" role="status"></p>
+      <div class="pass-actions">
+        <button type="button" class="btn btn-ghost" id="passCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="passSubmit">Change</button>
+      </div>
+    </form>
+  </dialog>
 </main>
 
 <footer class="site-footer">
@@ -1207,7 +1372,133 @@ details.raw pre{
     }
   }
 
+  var passDialog = document.getElementById('passDialog');
+  var passForm = document.getElementById('passForm');
+  var passTarget = document.getElementById('passTarget');
+  var passMsg = document.getElementById('passMsg');
+  var passSubmit = document.getElementById('passSubmit');
+  var passCancel = document.getElementById('passCancel');
+  var newPassword = document.getElementById('newPassword');
+  var confirmPassword = document.getElementById('confirmPassword');
+  var passUser = '';
+
+  function passStatus(text, kind) {
+    if (!passMsg) {
+      return;
+    }
+    passMsg.textContent = text || '';
+    passMsg.className = 'pass-msg' + (kind ? ' ' + kind : '');
+  }
+
+  function openPassDialog(user) {
+    passUser = user;
+    if (passTarget) {
+      passTarget.textContent = user;
+    }
+    passStatus('');
+    if (newPassword) {
+      newPassword.value = '';
+    }
+    if (confirmPassword) {
+      confirmPassword.value = '';
+    }
+    if (passSubmit) {
+      passSubmit.disabled = false;
+    }
+    if (typeof passDialog.showModal === 'function') {
+      passDialog.showModal();
+    } else {
+      passDialog.setAttribute('open', 'open');
+    }
+    if (newPassword) {
+      newPassword.focus();
+    }
+  }
+
+  function closePassDialog() {
+    if (typeof passDialog.close === 'function') {
+      passDialog.close();
+    } else {
+      passDialog.removeAttribute('open');
+    }
+  }
+
+  if (passCancel) {
+    passCancel.addEventListener('click', closePassDialog);
+  }
+
+  if (passForm) {
+    passForm.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var next = newPassword ? newPassword.value : '';
+      var again = confirmPassword ? confirmPassword.value : '';
+      if (next.length < 6) {
+        passStatus('New password must be at least 6 characters', 'err');
+        return;
+      }
+      if (next !== again) {
+        passStatus('New password and confirmation do not match', 'err');
+        return;
+      }
+
+      passSubmit.disabled = true;
+      passStatus('Changing password…');
+
+      var body = new FormData();
+      body.append('csrf', CSRF);
+      body.append('action', 'change_password');
+      body.append('user', passUser);
+      body.append('new_password', next);
+      body.append('confirm_password', again);
+
+      try {
+        var response = await fetch(window.location.href, {
+          method: 'POST',
+          body: body,
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        var text = await response.text();
+        var data;
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          throw new Error('Unexpected server response');
+        }
+        if (!data || data.status !== 'ok') {
+          throw new Error((data && data.message) || 'Password change failed');
+        }
+
+        var card = grid.querySelector('.acct[data-user="' + passUser.replace(/"/g, '\\"') + '"]');
+        if (card) {
+          var passCode = card.querySelector('.js-pass');
+          if (passCode) {
+            passCode.setAttribute('data-full', data.password);
+            if (passCode.classList.contains('revealed')) {
+              passCode.textContent = data.password;
+            }
+          }
+          var copyButton = card.querySelector('.js-copy');
+          if (copyButton) {
+            copyButton.setAttribute('data-copy', passUser + ' | ' + data.password);
+          }
+        }
+
+        passStatus('Password changed and saved', 'ok');
+        window.setTimeout(closePassDialog, 700);
+      } catch (error) {
+        passStatus(error && error.message ? error.message : 'Password change failed', 'err');
+        passSubmit.disabled = false;
+      }
+    });
+  }
+
   grid.addEventListener('click', function (event) {
+    var changeBtn = event.target.closest('.js-change-pass');
+    if (changeBtn) {
+      openPassDialog(changeBtn.getAttribute('data-user') || '');
+      return;
+    }
+
     var checkBtn = event.target.closest('.js-check');
     if (checkBtn) {
       var card = checkBtn.closest('.acct');

@@ -25,6 +25,11 @@ const CK_ORIGIN = 'https://www.g0lbajee.com';
 const CK_ORIGIN_POOL = [
     'https://www.g0lbajee.com',
     'https://www.gbajee53.vip',
+    'https://gg1bajee.com',
+    'https://gilbajee.com',
+    'https://gl2bajee.com',
+    'https://g4abajee.com',
+    'https://gn9bajee.com',
     'https://gbajee1.com',
     'https://gbajee2.com',
     'https://gbajee3.com',
@@ -45,6 +50,9 @@ function ckOriginPool(): array
                 $list[] = $origin;
             }
         }
+    }
+    foreach (ckDiscoverOrigins() as $origin) {
+        $list[] = $origin;
     }
     foreach (CK_ORIGIN_POOL as $origin) {
         $list[] = $origin;
@@ -68,10 +76,102 @@ function ckOriginKey(): string
 /** The vendor's geo-block answer, in whatever shape it arrives. */
 function ckIsRegionBlock(int $status, string $raw): bool
 {
-    if (preg_match('/region\s+is\s+currently\s+restricted|restricted\s+from\s+accessing|#455-/i', $raw)) {
+    if (preg_match('/login\.ip\.restricted|region\s+is\s+currently\s+restricted|restricted\s+from\s+accessing|#455-/i', $raw)) {
         return true;
     }
     return $status === 403 || $status === 451;
+}
+
+/**
+ * The vendor publishes its current live hosts in /api.json on the front-door
+ * domains. Read them so rotation follows the vendor instead of a stale list.
+ */
+function ckDiscoverOrigins(): array
+{
+    static $found = null;
+    if ($found !== null) {
+        return $found;
+    }
+
+    $cacheKey = ckOriginKey() . '_discovered';
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $cached = $_SESSION[$cacheKey] ?? null;
+        if (is_array($cached) && isset($cached['at'], $cached['origins']) && (time() - (int) $cached['at']) < 3600) {
+            return $found = (array) $cached['origins'];
+        }
+    }
+
+    $doors = [
+        'https://gsbajee.com', 'https://g9lbajee.com', 'https://iigbajee.com',
+        'https://gibajee.com', 'https://g8ubajee.com', 'https://6ggbajee.com',
+        'https://gbajee1.com', 'https://gbajee2.com', 'https://gbajee3.com', 'https://gbajee4.com',
+    ];
+    $origins = [];
+    foreach ($doors as $door) {
+        $ch = curl_init($door . '/api.json');
+        if ($ch === false) {
+            continue;
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => ['User-Agent: ' . ckUserAgent()],
+            CURLOPT_TIMEOUT        => 8,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 4,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        ckApplyProxy($ch);
+        $raw = curl_exec($ch);
+        $raw = is_string($raw) ? $raw : '';
+        $json = json_decode($raw, true);
+        if (!is_array($json) || !isset($json['urlList']) || !is_array($json['urlList'])) {
+            continue;
+        }
+        foreach ($json['urlList'] as $url) {
+            if (!is_string($url) || !preg_match('#^https?://#i', $url)) {
+                continue;
+            }
+            $origin = rtrim($url, '/');
+            if (!in_array($origin, $origins, true)) {
+                $origins[] = $origin;
+            }
+        }
+        if ($origins !== []) {
+            break;
+        }
+    }
+
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION[$cacheKey] = ['origins' => $origins, 'at' => time()];
+    }
+    return $found = $origins;
+}
+
+/** Optional outbound proxy: CK_PROXY env or a proxy.txt next to this file. */
+function ckProxy(): ?string
+{
+    $env = getenv('CK_PROXY');
+    if (is_string($env) && trim($env) !== '') {
+        return trim($env);
+    }
+    $file = __DIR__ . '/proxy.txt';
+    if (is_file($file)) {
+        $value = trim((string) file_get_contents($file));
+        if ($value !== '') {
+            return $value;
+        }
+    }
+    return null;
+}
+
+function ckApplyProxy($ch): void
+{
+    $proxy = ckProxy();
+    if ($proxy !== null) {
+        curl_setopt($ch, CURLOPT_PROXY, $proxy);
+    }
 }
 
 /** Origins that answered with a region block recently, with expiry. */
@@ -139,6 +239,7 @@ function ckProbeOrigin(string $origin): bool
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
+    ckApplyProxy($ch);
     $raw = curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $raw = is_string($raw) ? $raw : '';
@@ -350,6 +451,7 @@ function ckHttpOnce(string $origin, string $method, string $path, array $opts = 
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
+    ckApplyProxy($ch);
     if (isset($opts['body'])) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, $opts['body']);
     }
@@ -704,6 +806,7 @@ function ckFetchCaptcha(): array
             return strlen($header);
         },
     ]);
+    ckApplyProxy($ch);
     $raw = curl_exec($ch);
     $err = $raw === false ? curl_error($ch) : null;
     $raw = is_string($raw) ? $raw : '';

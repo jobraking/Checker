@@ -102,12 +102,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '')
                 ];
                 $added++;
             }
+            $poolSaved = true;
             if ($added > 0) {
                 $cfg['enabled'] = true;
-                solver_save($cfg);
+                $poolSaved = solver_save($cfg);
             }
-            $flashText = count($made) . ' account(s) created and saved to the solver pool. Copy them now — passwords and keys are not shown again.';
-            $solverFlash = ['kind' => 'ok', 'text' => $flashText];
+            $flashText = count($made) . ' account(s) created'
+                . ($poolSaved ? ' and saved to the solver pool.' : '; pool save failed.')
+                . ' Copy them now — passwords and keys are not shown again.';
+            $solverFlash = ['kind' => $poolSaved ? 'ok' : 'error', 'text' => $flashText];
         } else {
             $solverFlash = ['kind' => 'error', 'text' => 'No accounts were created.'];
         }
@@ -115,6 +118,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && ($_POST['action'] ?? '')
         $solverFlash = ['kind' => 'error', 'text' => 'Database unavailable.'];
     }
 }
+
+$solverCfg = solver_config();
+$solverLiveKeys = solver_keys($solverCfg);
+$solverNeedsKey = $solverCfg['enabled'] && $solverLiveKeys === [];
 
 $sites = [
     ['href' => '/ck44/', 'name' => 'CK444', 'domain' => 'ck444.ai'],

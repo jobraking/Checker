@@ -188,8 +188,13 @@ function solver_solve_geetest_v4(string $captchaId, string $pageUrl, ?string &$u
     $usedKey = null;
     $error = 'solver disabled';
     $cfg = solver_config();
+    if (!$cfg['enabled']) {
+        return null;
+    }
     $keys = solver_keys($cfg);
-    if (!$cfg['enabled'] || $keys === []) {
+    if ($keys === []) {
+        $error = 'no usable solver key';
+        solver_ensure_slot();
         return null;
     }
 

@@ -371,8 +371,10 @@ function ckHttpOnce(string $origin, string $method, string $path, array $opts = 
 }
 
 /**
- * Perform a request, rotating to the next live origin when the current one
- * answers with the geo-block page or refuses the connection.
+ * Perform a request, rotating to a verified live origin when the current one
+ * answers with the geo-block page or refuses the connection. A candidate is
+ * only adopted after it passes the RSA probe, so a parked front-door domain
+ * that 404s every API path can never become the active origin.
  *
  * @param array{headers?:array<string,string>,body?:string,json?:bool} $opts
  * @return array{status:int,body:array<string,mixed>|null,raw:string,error:?string}
@@ -380,33 +382,36 @@ function ckHttpOnce(string $origin, string $method, string $path, array $opts = 
 function ckHttp(string $method, string $path, array $opts = []): array
 {
     $origin = ckResolveOrigin();
-    $order = [$origin];
-    foreach (ckOriginPool() as $candidate) {
-        if ($candidate !== $origin) {
-            $order[] = $candidate;
-        }
-    }
+    $res = ckHttpOnce($origin, $method, $path, $opts);
 
-    $first = null;
-    foreach ($order as $candidate) {
-        $res = ckHttpOnce($candidate, $method, $path, $opts);
-        $first ??= $res;
-
-        $blocked = ckIsRegionBlock($res['status'], $res['raw']);
-        $unreachable = $res['status'] === 0 && $res['error'] !== null;
-        if ($blocked) {
-            ckBlockOrigin($candidate);
-        }
-        if ($blocked || $unreachable) {
-            continue;
-        }
-        if ($candidate !== $origin) {
-            ckSetActiveOrigin($candidate);
-        }
+    $blocked = ckIsRegionBlock($res['status'], $res['raw']);
+    $unreachable = $res['status'] === 0 && $res['error'] !== null;
+    $notApi = $res['status'] >= 400 && str_starts_with(ltrim($res['raw']), '<');
+    if (!$blocked && !$unreachable && !$notApi) {
         return $res;
     }
 
-    return $first ?? ['status' => 0, 'body' => null, 'raw' => '', 'error' => 'no origin available'];
+    if ($blocked) {
+        ckBlockOrigin($origin);
+    }
+
+    $next = ckResolveOrigin(true);
+    if ($next === $origin) {
+        return $res;
+    }
+
+    $retry = ckHttpOnce($next, $method, $path, $opts);
+    $retryBlocked = ckIsRegionBlock($retry['status'], $retry['raw']);
+    $retryUnreachable = $retry['status'] === 0 && $retry['error'] !== null;
+    if ($retryBlocked) {
+        ckBlockOrigin($next);
+    }
+    if ($retryBlocked || $retryUnreachable) {
+        return $res;
+    }
+
+    ckSetActiveOrigin($next);
+    return $retry;
 }
 
 function ckRealUaHeader(): string
@@ -419,17 +424,23 @@ function ckRealUaHeader(): string
 /** Fetch the RSA public modulus. Needs no credentials. */
 function ckFetchRsaModulus(): string
 {
-    $res = ckHttp('GET', '/wps/session/key/rsa?_=' . (string) (int) (microtime(true) * 1000), [
-        'headers' => ['Cache-Control' => 'no-cache', 'Accept' => 'text/plain'],
-    ]);
-    if ($res['error'] !== null) {
-        throw new RuntimeException('rsa key request failed: ' . $res['error']);
+    $lastStatus = 0;
+    for ($attempt = 0; $attempt < 2; $attempt++) {
+        $res = ckHttp('GET', '/wps/session/key/rsa?_=' . (string) (int) (microtime(true) * 1000), [
+            'headers' => ['Cache-Control' => 'no-cache', 'Accept' => 'text/plain'],
+        ]);
+        if ($res['error'] !== null) {
+            throw new RuntimeException('rsa key request failed: ' . $res['error']);
+        }
+        $lastStatus = $res['status'];
+        $key = trim($res['raw']);
+        if (preg_match('/^[0-9a-fA-F]{256,}$/', $key)) {
+            return $key;
+        }
+        // HTML or a 404 means this origin is not an API host. Re-resolve.
+        ckResolveOrigin(true);
     }
-    $key = trim($res['raw']);
-    if (!preg_match('/^[0-9a-fA-F]{256,}$/', $key)) {
-        throw new RuntimeException('unexpected rsa key response (HTTP ' . $res['status'] . ')');
-    }
-    return $key;
+    throw new RuntimeException('unexpected rsa key response (HTTP ' . $lastStatus . ')');
 }
 
 /**

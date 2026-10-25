@@ -619,6 +619,13 @@ code{
 .bulk-input::placeholder{color:#9aa8b6}
 .bulk-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
 .bulk-actions .field-hint{margin:0 0 0 auto}
+.bulk-progress{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:.78rem;color:var(--muted)}
+.bulk-progress[hidden]{display:none}
+.bulk-progress span{display:inline-flex;align-items:center;gap:6px}
+.bulk-progress span+span::before{content:"\2022";color:#cbd5e1;margin-right:2px}
+.bulk-progress strong{color:var(--ink);font-variant-numeric:tabular-nums}
+.bulk-progress .p-ok strong{color:var(--brand-dark)}
+.bulk-progress .p-err strong{color:var(--danger)}
 .table-wrap{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:auto}
 .table-wrap[hidden]{display:none}
 .result-table{width:100%;border-collapse:collapse;min-width:560px}
@@ -834,6 +841,13 @@ code{
           </thead>
           <tbody id="bulkTable"></tbody>
         </table>
+      </div>
+
+      <div class="bulk-progress" id="bulkProgress" hidden>
+        <span>Total <strong id="progTotal">0</strong></span>
+        <span class="p-ok">Ok <strong id="progOk">0</strong></span>
+        <span class="p-err">Error <strong id="progError">0</strong></span>
+        <span>Remaining <strong id="progRemaining">0</strong></span>
       </div>
 
       <div class="empty-state" id="bulkEmpty">
@@ -1124,6 +1138,20 @@ function askCaptcha(src) {
   const empty = $('bulkEmpty');
   const status = $('bulkStatus');
   const count = $('bulkCount');
+  const progress = $('bulkProgress');
+  const progTotal = $('progTotal');
+  const progOk = $('progOk');
+  const progError = $('progError');
+  const progRemaining = $('progRemaining');
+
+  function updateProgress(total, ok, err, done) {
+    if (!progress) return;
+    progress.hidden = false;
+    if (progTotal) progTotal.textContent = total;
+    if (progOk) progOk.textContent = ok;
+    if (progError) progError.textContent = err;
+    if (progRemaining) progRemaining.textContent = Math.max(0, total - done);
+  }
   if (!btn || !input || !table || !wrap || !empty) return;
 
   function updateCount() {
@@ -1272,6 +1300,7 @@ function askCaptcha(src) {
     wrap.hidden = false;
     empty.hidden = true;
     hideStatus(status);
+    updateProgress(lines.length, 0, 0, 0);
     let valid = 0;
     let invalid = 0;
     let errors = 0;
@@ -1336,6 +1365,7 @@ function askCaptcha(src) {
         }
         addActions(row.actions, state, row, false);
       }
+      updateProgress(lines.length, valid, invalid + errors, i + 1);
       await new Promise(function (resolve) { setTimeout(resolve, 180); });
     }
 
@@ -1354,6 +1384,7 @@ function askCaptcha(src) {
       wrap.hidden = true;
       empty.hidden = false;
       hideStatus(status);
+      if (progress) progress.hidden = true;
       updateCount();
       input.focus();
     });

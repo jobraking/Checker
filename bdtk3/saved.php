@@ -402,7 +402,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $results = [];
-        $endpointFile = __DIR__ . '/live_endpoints.txt';
+        $endpointFile = dirname(__DIR__) . '/lib/live_endpoints.txt';
         $endpoints = is_readable($endpointFile) ? file($endpointFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
         foreach ($endpoints as $endpoint) {
             $endpoint = trim($endpoint);

@@ -36,7 +36,11 @@ jobs:
               "DB_USER": os.environ.get("DB_USER", ""),
               "DB_PASS": os.environ.get("DB_PASS", ""),
           }
-          body = "<?php\ndeclare(strict_types=1);\n\nreturn " + json.dumps(cfg, indent=4) + ";\n"
+          entries = ",\n".join(
+              "    %s => %s" % (json.dumps(k), json.dumps(v))
+              for k, v in cfg.items()
+          )
+          body = "<?php\ndeclare(strict_types=1);\n\nreturn [\n" + entries + ",\n];\n"
           with open("config.local.php", "w") as handle:
               handle.write(body)
           PY

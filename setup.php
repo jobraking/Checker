@@ -28,17 +28,23 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $error = 'Database name, username, and password are required.';
         } else {
             try {
-                $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . $dbName . ';charset=utf8mb4';
-                $pdo = new PDO($dsn, DB_USER, DB_PASS, [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false,
-                ]);
-                $pdo->exec("CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, username VARCHAR(50) NOT NULL UNIQUE, password_hash VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                if (DB_DRIVER === 'mysql' && $dbName !== DB_NAME) {
+                    $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . $dbName . ';charset=utf8mb4';
+                    new PDO($dsn, DB_USER, DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+                    file_put_contents(__DIR__ . '/db_name.txt', $dbName);
+                }
+                $pdo = db();
                 $hash = password_hash($adminPass, PASSWORD_DEFAULT);
-                $stmt = $pdo->prepare("INSERT INTO users (username, password_hash) VALUES (?, ?) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)");
-                $stmt->execute([$adminUser, $hash]);
-                file_put_contents(__DIR__ . '/db_name.txt', $dbName);
+                $stmt = $pdo->prepare('SELECT id FROM users WHERE username = ?');
+                $stmt->execute([$adminUser]);
+                $existing = $stmt->fetch();
+                if ($existing) {
+                    $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+                        ->execute([$hash, $existing['id']]);
+                } else {
+                    $pdo->prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)')
+                        ->execute([$adminUser, $hash]);
+                }
                 $message = 'Setup complete. You can now sign in.';
             } catch (Throwable $e) {
                 $error = 'Setup failed: ' . $e->getMessage();

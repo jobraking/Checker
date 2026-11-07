@@ -5,3 +5,8 @@ bulk-check-audit.jsonl
 db_name.txt
 solver.json
 proxy.txt
+
+config.local.php
+data/
+*.sqlite
+*.sqlite3

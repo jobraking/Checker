@@ -9,6 +9,34 @@ function db(): PDO
     if ($pdo instanceof PDO) {
         return $pdo;
     }
+
+    if (DB_DRIVER === 'sqlite') {
+        $path = DB_SQLITE;
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+        $pdo = new PDO('sqlite:' . $path, null, null, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+        $pdo->exec('PRAGMA journal_mode=WAL');
+        $pdo->exec('PRAGMA busy_timeout=5000');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+        $hasApiKey = false;
+        foreach ($pdo->query('PRAGMA table_info(users)')->fetchAll() as $column) {
+            if (($column['name'] ?? '') === 'api_key') {
+                $hasApiKey = true;
+                break;
+            }
+        }
+        if (!$hasApiKey) {
+            $pdo->exec('ALTER TABLE users ADD COLUMN api_key TEXT');
+        }
+        return $pdo;
+    }
+
     $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=utf8mb4';
     $pdo = new PDO($dsn, DB_USER, DB_PASS, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
